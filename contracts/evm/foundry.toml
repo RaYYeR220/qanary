@@ -1,0 +1,22 @@
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+solc = "0.8.30"
+evm_version = "prague"
+optimizer = true
+optimizer_runs = 10000
+via_ir = false
+ffi = true
+fs_permissions = [{ access = "read", path = "./" }, { access = "read", path = "../../vectors" }, { access = "read-write", path = "../../deployments" }]
+gas_limit = 1000000000
+[fuzz]
+runs = 1000
+[invariant]
+runs = 256
+depth = 64
+[rpc_endpoints]
+arb_one = "${ARB_ONE_RPC}"
+arb_sepolia = "${ARB_SEPOLIA_RPC}"

@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = []
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+repository = "https://github.com/qanary/qanary"
+
+[workspace.dependencies]
+stylus-sdk = { version = "=0.10.9", default-features = false }
+alloy-primitives = { version = "1.5.7", default-features = false }
+alloy-sol-types = { version = "1.5.7", default-features = false }
+fips204 = { version = "=0.4.6", default-features = false }
+fn-dsa-vrfy = "=0.4.0"
+fn-dsa-comm = "=0.4.0"
+crypto-bigint = { version = "0.6", default-features = false }
+qanary-pq = { path = "crates/qanary-pq", default-features = false }
+qanary-curves = { path = "crates/qanary-curves" }
+
+[profile.release]
+codegen-units = 1
+strip = true
+lto = true
+panic = "abort"
+opt-level = 3
+debug = false

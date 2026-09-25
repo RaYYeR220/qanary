@@ -1,0 +1,12 @@
+[submodule "contracts/evm/lib/forge-std"]
+	path = contracts/evm/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "contracts/evm/lib/openzeppelin-contracts"]
+	path = contracts/evm/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "contracts/evm/lib/safe-smart-account"]
+	path = contracts/evm/lib/safe-smart-account
+	url = https://github.com/safe-global/safe-smart-account
+[submodule "contracts/evm/lib/account-abstraction"]
+	path = contracts/evm/lib/account-abstraction
+	url = https://github.com/eth-infinitism/account-abstraction
