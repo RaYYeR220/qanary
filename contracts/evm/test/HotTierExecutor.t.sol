@@ -1018,4 +1018,119 @@ contract HotTierExecutorTest is Test {
         _hot(_xfer(address(dai), bob, 5e18));
         assertEq(dai.balanceOf(bob), 5e18);
     }
+
+    // ------------------------------------------------------------------ reconfigure keeps bucket levels
+
+    function _configureAs(TestAccount7579 a, HotTierExecutor.Setup memory s) internal {
+        vm.prank(address(a));
+        ex.configure(s);
+    }
+
+    /// @dev Incident response "lower the caps" must not hand the (compromised) hot key a fresh cap.
+    function test_reconfigure_drainedBucket_noFreshCap() public {
+        _hot(_xfer(address(usdc), bob, CAP)); // the hot key drains its bucket
+        HotTierExecutor.Setup memory s = _setup();
+        s.caps[0] = CAP / 10; // same signer, lower cap
+        _configureAs(acct, s);
+        assertEq(ex.available(address(acct), address(usdc)), 0);
+        _expectHotRevert(_xfer(address(usdc), bob, 1), _capExceeded(address(usdc), 1, 0));
+        // it refills from empty at the new cap's rate
+        vm.warp(vm.getBlockTimestamp() + WINDOW / 2);
+        assertEq(ex.available(address(acct), address(usdc)), CAP / 20);
+    }
+
+    function test_reconfigure_carriesLevelRefilledUnderOldConfig() public {
+        _hot(_xfer(address(usdc), bob, 600e6)); // level 400
+        vm.warp(vm.getBlockTimestamp() + WINDOW / 4); // +250 at the old rate -> 650
+        HotTierExecutor.Setup memory s = _setup();
+        s.caps[0] = 2 * CAP; // a higher cap does not raise the level
+        s.window = 2 * WINDOW;
+        _configureAs(acct, s);
+        assertEq(ex.available(address(acct), address(usdc)), 650e6);
+        assertEq(ex.available(address(acct), ETH), ETH_CAP); // full stays full
+        // refill continues from the carried level at the new rate (2 * CAP per 2 * WINDOW)
+        vm.warp(vm.getBlockTimestamp() + WINDOW / 4);
+        assertEq(ex.available(address(acct), address(usdc)), 650e6 + 250e6);
+    }
+
+    function test_reconfigure_clampsToNewCap() public {
+        _hot(_xfer(address(usdc), bob, 100e6)); // level 900
+        HotTierExecutor.Setup memory s = _setup();
+        s.caps[0] = 300e6;
+        _configureAs(acct, s);
+        assertEq(ex.available(address(acct), address(usdc)), 300e6);
+        _expectHotRevert(_xfer(address(usdc), bob, 300e6 + 1), _capExceeded(address(usdc), 300e6 + 1, 300e6));
+        _hot(_xfer(address(usdc), bob, 300e6));
+    }
+
+    function test_reconfigure_clampsToNewEffectiveCapAtThreatLevel() public {
+        _hot(_xfer(address(usdc), bob, 100e6)); // level 900 at full scale
+        reg.setLadderLevel(1); // old table: 50% -> the old level is min(900, 500) = 500
+        HotTierExecutor.Setup memory s = _setup();
+        s.levelBps = [uint16(10_000), 2_000, 1_000, 0]; // new table: 20% at level 1
+        _configureAs(acct, s);
+        assertEq(ex.available(address(acct), address(usdc)), 200e6);
+        assertEq(ex.available(address(acct), ETH), ETH_CAP / 5);
+    }
+
+    function test_reconfigure_newAssetStartsFull_droppedAssetIsForgotten() public {
+        _hot(_xfer(address(usdc), bob, CAP));
+        _hot(_call(bob, ETH_CAP, ""));
+        HotTierExecutor.Setup memory s = _setup();
+        s.assets[1] = address(dai); // ETH dropped, DAI added
+        s.caps[1] = 5e18;
+        _configureAs(acct, s);
+        assertEq(ex.available(address(acct), address(usdc)), 0); // kept: carried
+        assertEq(ex.available(address(acct), address(dai)), 5e18); // new: full
+        assertEq(ex.available(address(acct), ETH), 0); // untracked
+
+        // ETH comes back: its old (empty) bucket is gone, so it starts full again
+        _configureAs(acct, _setup());
+        assertEq(ex.available(address(acct), address(usdc)), 0);
+        assertEq(ex.available(address(acct), ETH), ETH_CAP);
+    }
+
+    function test_reconfigure_revertingOldRegistry_carriedBucketsStartEmpty() public {
+        reg.setReverting(true);
+        MockCanaryRegistry reg2 = new MockCanaryRegistry();
+        HotTierExecutor.Setup memory s = _setup();
+        s.registry = address(reg2);
+        _configureAs(acct, s); // the broken registry does not block moving away from it
+        assertEq(ex.available(address(acct), address(usdc)), 0);
+        assertEq(ex.available(address(acct), ETH), 0);
+        vm.warp(vm.getBlockTimestamp() + WINDOW);
+        assertEq(ex.available(address(acct), address(usdc)), CAP);
+    }
+
+    function test_reconfigure_newSignerFamilyBroken_carriedBucketsStartEmpty() public {
+        reg.setFamilyBroken(1, true); // P-256 broken
+        HotTierExecutor.Setup memory s = _setup();
+        s.signer = HotTierExecutor.HotSigner(
+            HotTierExecutor.Family.P256, address(0), bytes32(uint256(1)), bytes32(uint256(2))
+        );
+        _configureAs(acct, s);
+        reg.setFamilyBroken(1, false); // even if the registry later answered differently
+        assertEq(ex.available(address(acct), address(usdc)), 0);
+    }
+
+    function test_reinstall_afterUninstall_startsFull() public {
+        _hot(_xfer(address(usdc), bob, CAP));
+        vm.prank(address(acct));
+        acct.uninstallModule(MODULE_TYPE_EXECUTOR, address(ex), "");
+        acct.installModuleForTest(MODULE_TYPE_EXECUTOR, address(ex), abi.encode(_setup()));
+        assertEq(ex.available(address(acct), address(usdc)), CAP);
+    }
+
+    function testFuzz_reconfigure_neverRaisesLevel(uint256 spent, uint256 elapsed, uint128 newCap) public {
+        spent = bound(spent, 0, CAP);
+        elapsed = bound(elapsed, 0, 2 * uint256(WINDOW));
+        newCap = uint128(bound(newCap, 0, 4 * uint256(CAP)));
+        if (spent != 0) _hot(_xfer(address(usdc), bob, spent));
+        vm.warp(vm.getBlockTimestamp() + elapsed);
+        uint256 before = ex.available(address(acct), address(usdc));
+        HotTierExecutor.Setup memory s = _setup();
+        s.caps[0] = newCap;
+        _configureAs(acct, s);
+        assertEq(ex.available(address(acct), address(usdc)), Math.min(before, newCap));
+    }
 }
