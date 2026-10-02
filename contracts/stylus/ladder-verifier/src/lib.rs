@@ -100,4 +100,16 @@ mod tests {
             assert_eq!(c.verify(curve, qx, qy, d, FixedBytes::ZERO, s).ok(), Some(false), "curve {curve}");
         }
     }
+
+    #[test]
+    fn boundary_inputs_false() {
+        let (_vm, c) = contract();
+        let max = FixedBytes::<32>([0xff; 32]);
+        for (curve, [qx, qy, d, r, s]) in vecs() {
+            assert_eq!(c.verify(curve, qx, qy, d, max, max).ok(), Some(false), "max r,s curve {curve}");
+            let mut bad_y = qy;
+            bad_y.0[31] ^= 1;
+            assert_eq!(c.verify(curve, qx, bad_y, d, r, s).ok(), Some(false), "off-curve curve {curve}");
+        }
+    }
 }

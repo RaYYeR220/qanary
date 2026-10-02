@@ -3,6 +3,8 @@ target-linux/
 node_modules/
 contracts/evm/out/
 contracts/evm/cache/
+contracts/evm/out-stylus/
+contracts/evm/cache-stylus/
 contracts/evm/broadcast/*/31337/
 contracts/evm/stylus-wasm/
 .env
