@@ -10,14 +10,14 @@ use qanary_pq::*;
 // ---------------------------------------------------------------- arbitrary-input fuzzing
 
 macro_rules! fuzz_never_accepts_garbage {
-    ($name:ident, $verify:expr) => {
+    ($name:ident, $verify:expr, $pklen:expr, $siglen:expr) => {
         proptest! {
             #![proptest_config(ProptestConfig { cases: 256, failure_persistence: None, ..ProptestConfig::default() })]
             #[test]
             fn $name(
-                pk in pvec(any::<u8>(), 0..4000),
+                pk in prop_oneof![Just($pklen as usize), 0..4000usize].prop_flat_map(|n| pvec(any::<u8>(), n)),
                 msg in pvec(any::<u8>(), 0..4000),
-                sig in pvec(any::<u8>(), 0..4000),
+                sig in prop_oneof![Just($siglen as usize), 0..4000usize].prop_flat_map(|n| pvec(any::<u8>(), n)),
             ) {
                 let f: fn(&[u8], &[u8], &[u8]) -> Result<bool, VerifyError> = $verify;
                 let got = no_panic(|| f(&pk, &msg, &sig));
@@ -27,10 +27,10 @@ macro_rules! fuzz_never_accepts_garbage {
     };
 }
 
-fuzz_never_accepts_garbage!(fuzz_mldsa44_never_accepts_garbage, mldsa44_verify);
-fuzz_never_accepts_garbage!(fuzz_mldsa65_never_accepts_garbage, mldsa65_verify);
-fuzz_never_accepts_garbage!(fuzz_falcon512_never_accepts_garbage, falcon512_verify);
-fuzz_never_accepts_garbage!(fuzz_fndsa512_never_accepts_garbage, fndsa512_verify);
+fuzz_never_accepts_garbage!(fuzz_mldsa44_never_accepts_garbage, mldsa44_verify, 1312, 2420);
+fuzz_never_accepts_garbage!(fuzz_mldsa65_never_accepts_garbage, mldsa65_verify, 1952, 3309);
+fuzz_never_accepts_garbage!(fuzz_falcon512_never_accepts_garbage, falcon512_verify, 897, 666);
+fuzz_never_accepts_garbage!(fuzz_fndsa512_never_accepts_garbage, fndsa512_verify, 897, 666);
 
 // ---------------------------------------------------------------- single-byte mutation
 

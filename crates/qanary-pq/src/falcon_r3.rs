@@ -5,9 +5,9 @@
 //! round-3 specific, since the FN-DSA draft changed all of them (bit order, hash-to-point
 //! bound, B_inf).
 //!
-//! Signature input format (falcon.c "compressed" format):
-//!   0x29 || nonce[40] || comp(s2)            (variable length, no trailing garbage)
-//! or the "padded" format:
+//! Signature input format (detached, header 0x30 + logn = 0x39 for Falcon-512):
+//!   0x39 || nonce[40] || comp(s2)            (compressed, variable length, no trailing bytes)
+//! or the "padded" form of the same signature:
 //!   0x39 || nonce[40] || comp(s2) || 0x00*   (exactly 666 bytes)
 //! Public key: 0x09 || 512 x 14-bit big-endian packed coefficients (897 bytes).
 
@@ -75,27 +75,13 @@ impl PublicKey {
         let nonce = &sig[1..1 + NONCE_LEN];
         let comp = &sig[1 + NONCE_LEN..];
         let mut s2 = [0i16; N];
-        match sig[0] {
-            0x29 => {
-                // compressed: must consume every byte
-                match comp_decode(comp, &mut s2) {
-                    Some(used) if used == comp.len() => {}
-                    _ => return false,
-                }
-            }
-            0x39 => {
-                if sig.len() != PADDED_SIG_LEN_512 {
-                    return false;
-                }
-                match comp_decode(comp, &mut s2) {
-                    Some(used) => {
-                        if comp[used..].iter().any(|&b| b != 0) {
-                            return false;
-                        }
-                    }
-                    None => return false,
-                }
-            }
+        if sig[0] != 0x39 {
+            return false;
+        }
+        match comp_decode(comp, &mut s2) {
+            Some(used) if used == comp.len() => {}
+            // padded form: exactly 666 bytes, zero-only tail
+            Some(used) if sig.len() == PADDED_SIG_LEN_512 && comp[used..].iter().all(|&b| b == 0) => {}
             _ => return false,
         }
 

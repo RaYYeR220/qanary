@@ -26,6 +26,10 @@ message) triples.
 A verifying key and signature from `fn-dsa-vrfy` 0.4.0's own test suite,
 covering FN-DSA-512 with the domain context `"context"` over the message `"message"`; verified through `fndsa512_verify_ctx`.
 
+## `falcon512_compressed.{pk,msg,sig}`
+
+Falcon-512 detached compressed signature (header 0x39, variable length) produced by `@noble/post-quantum` 0.7.1 `falcon512` (non-hedged signing, key from SHAKE256-expanded 32-byte seed `90290baa7b7633551de99dcbade926845ec04639d48c5f428c4db10238df56b6`, message `e7f44d3fbddc9cf1c0b0eddb3bee00ed60f47ff2c56d1a21b4080fb0b29d65d0`). The tests also verify its 666-byte zero-padded form.
+
 ## `mldsa44.{pk,msg,sig}`, `mldsa44_devsign.{pk,msg,sig}`, `mldsa65.{pk,msg,sig}`, `falcon512_devsign.{pk,msg,sig}`
 
 Devsign fixtures: keypair and signature generated with the repository's
