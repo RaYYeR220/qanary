@@ -21,7 +21,7 @@ Reference expansions of 17 ML-DSA-44 public keys: `mldsa44.pk`, `mldsa44_devsign
 keys of `mldsa/sigver-44.json` in `tcId` order. For each key the file records `keccak256(pk)` and
 the `keccak256` of the 20,545-byte blob (`0x00 || tr || NTT(2^13 t1) || ExpandA(rho)`) that
 `prepare/prepare.py` from `fireblocks-labs/evm-ml-dsa-verifier` (commit `cca262b`) outputs for it.
-`contracts/evm/test/fallback` checks that the on-chain `SolidityMLDSA44Verifier.prepareKey`
+`contracts/evm/test/fallback` checks that the on-chain `MLDSA44ExpandedKeyStore.prepare`
 deploys exactly these blobs.
 
 ## `falcon-r3/falcon512-KAT.rsp`

@@ -10,6 +10,3 @@
 [submodule "contracts/evm/lib/account-abstraction"]
 	path = contracts/evm/lib/account-abstraction
 	url = https://github.com/eth-infinitism/account-abstraction
-[submodule "contracts/evm/lib/evm-ml-dsa-verifier"]
-	path = contracts/evm/lib/evm-ml-dsa-verifier
-	url = https://github.com/fireblocks-labs/evm-ml-dsa-verifier

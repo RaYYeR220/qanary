@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {f1600Fast170, shake256Batch170} from "evm-ml-dsa-verifier/FastKeccak170.sol";
+import {f1600Fast170, shake256Batch170} from "./vendor/FastKeccak170.sol";
 
 /// @title MLDSA44KeyExpansion
 /// @notice Expands a FIPS 204 ML-DSA-44 public key on-chain into the 20,544-byte payload the
-///         `MLDSA44Verifier` core (lib/evm-ml-dsa-verifier) reads with EXTCODECOPY:
+///         vendored `MLDSA44Verifier` core (`vendor/`) reads with EXTCODECOPY:
 ///           [    0,    64)  tr    = SHAKE256(pk, 64)
 ///           [   64,  4160)  t1hat = NTT(2^13 * t1), 4 polynomials
 ///           [ 4160, 20544)  Ahat  = ExpandA(rho), 16 polynomials, row-major (i * 4 + j)

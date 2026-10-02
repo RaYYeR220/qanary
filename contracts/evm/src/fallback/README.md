@@ -29,49 +29,59 @@ and keeps the same pointer.
 
 | Contract | Source | Role |
 |---|---|---|
-| Keccak-f[1600] helper | `lib/evm-ml-dsa-verifier/helpers/f1600_170.hex`, 21,622 bytes of raw runtime | Unrolled permutation and a batched SHAKE-256 entry point, bound by code hash `0x4afb4435…817b` |
-| `MLDSA44Verifier` (core) | `lib/evm-ml-dsa-verifier/src/MLDSA44Verifier.sol`, built through `MLDSA44Core.sol` | FIPS 204 ML-DSA-44 verification against an expanded key read from a data contract |
-| `SolidityMLDSA44Verifier` | this directory | ERC-7913 adapter, key parsing and on-chain key preparation |
-| Prepared blob, one per key | deployed by `prepareKey` | `0x00 ‖ tr ‖ NTT(2^13·t1) ‖ ExpandA(rho)`, 20,545 bytes of code |
+| Keccak-f[1600] helper | `vendor/f1600_170.hex`, 21,622 bytes of raw runtime | Unrolled permutation and a batched SHAKE-256 entry point, bound by code hash `0x4afb4435…817b` |
+| `MLDSA44Verifier` (core) | `vendor/MLDSA44Verifier.sol`, vendored from Fireblocks (see `vendor/README.md`) | FIPS 204 ML-DSA-44 verification against an expanded key read from a data contract |
+| `MLDSA44ExpandedKeyStore` | `MLDSA44ExpandedKeyStore.sol`, `MLDSA44KeyExpansion.sol` | Expands keys on-chain and deploys one blob per key |
+| `SolidityMLDSA44Verifier` | `SolidityMLDSA44Verifier.sol`, `MLDSA44PublicKey.sol` | ERC-7913 adapter: key parsing, blob lookup, call into the core |
+| Prepared blob, one per key | deployed by the store | `0x00 ‖ tr ‖ NTT(2^13·t1) ‖ ExpandA(rho)`, 20,545 bytes of code |
 
 No published Solidity ML-DSA-44 verifier takes the raw 1,312-byte key. All of them (Fireblocks, and
 ZKNox on both `main` and `exp/packed-verifier`) read a key that was expanded off-chain, and they
 cannot check on-chain that the expanded key matches a real public key. Upstream `docs/SAFETY.md`
-says the same thing: a forged expansion makes the verifier universally forgeable. This adapter
-closes that gap in the following way.
+says the same thing: a forged expansion makes the verifier universally forgeable. This verifier
+closes that gap with `MLDSA44ExpandedKeyStore`:
 
-- `prepareKey(key)` takes the same key formats as `verify`. It computes the expansion on-chain in
-  `MLDSA44KeyExpansion.sol`: `tr = SHAKE256(pk, 64)`, the NTT of `2^13·t1`, and `ExpandA(rho)` by
-  SHAKE-128 rejection sampling. SHAKE runs on the same pinned helper. The result is deployed with
-  CREATE2 at `blobAddress(keccak256(pk))`. The CREATE2 init code is a constant: it staticcalls
-  `pendingBlob()` on the verifier, which hands over the payload from transient storage. Only the
-  verifier can create code at that address, and it only creates the expansion of that `pk`. The
-  blob is therefore bound to the raw key on-chain, and `verify` finds it from the key alone with no
-  storage read, which keeps ERC-4337 validation within the ERC-7562 rules. `prepareKey` is
-  permissionless and idempotent.
-- `verify` parses and checks `key` and `signature` the way the Stylus verifier does, derives the
-  blob address, and asks the core for `verify(blob, abi.encodePacked(hash), signature)`.
-- `verify` with a well-formed key that was never prepared reverts with
-  `KeyNotPrepared(bytes32 pkHash)`. `isPrepared(key)` tells you in advance. The Stylus verifiers do
-  not have this error.
+- `prepare(key)` takes the same key formats as `verify`. It computes the expansion on-chain:
+  `tr = SHAKE256(pk, 64)`, the NTT of `2^13·t1`, and `ExpandA(rho)` by SHAKE-128 rejection
+  sampling. SHAKE runs on the same pinned helper.
+- The result is deployed with CREATE2 at `blobAddress(keccak256(pk))`. The CREATE2 init code is a
+  constant: it staticcalls `pendingBlob()` on the store, which hands over the payload from
+  transient storage. Only the store can create code at that address, and it only creates the
+  expansion of that `pk`. The blob is therefore bound to the raw key on-chain, and the verifier
+  finds it from the key alone.
+- `prepare` is permissionless and idempotent. The verifier's `prepareKey(key)` forwards to it.
+- Prepared keys survive a verifier redeployment: a new `SolidityMLDSA44Verifier` that points at
+  the same store reuses them.
+
+`verify` parses and checks `key` and `signature` the way the Stylus verifier does, derives the blob
+address, and asks the core for `verify(blob, abi.encodePacked(hash), signature)`. If the key is
+well formed but was never prepared, `verify` reverts with `KeyNotPrepared(bytes32 pkHash)`;
+`isPrepared(key)` tells you in advance. The Stylus verifiers do not have this error.
+
+**ERC-4337 / ERC-7562.** `verify` reads no storage. Its call tree is the adapter, the core and the
+helper. None of their runtimes contains an opcode that ERC-7562 bans during validation: no
+`GAS` unless a `*CALL` immediately follows, no block or environment opcodes, no
+`CREATE`/`CREATE2`, no `SELFDESTRUCT`, and no `SLOAD`, `SSTORE`, `TLOAD` or `TSTORE`. A test checks
+this by scanning the deployed bytecode. CREATE2 and transient storage live only in the store, which
+`verify` never calls. Upstream's core had 9 profiling `GAS` reads; they are patched out in
+`vendor/` (see `vendor/README.md`).
 
 The expansion is byte-for-byte the output of upstream `prepare/prepare.py`. The tests check this on
 17 keys (`vectors/mldsa/prepared-44.json`).
 
 ## Deployment
 
-1. Deploy the helper runtime verbatim, using an init code that returns
-   `lib/evm-ml-dsa-verifier/helpers/f1600_170.hex`. Its `EXTCODEHASH` must be
-   `0x4afb4435879cdf8e50474c7aab2bc3a679caed432550ad6dba64f509309a817b`. One helper per chain is
-   enough.
-2. Deploy the core: `MLDSA44Verifier.sol:MLDSA44Verifier` with constructor argument `helper`. Its
-   constructor checks the helper's code hash.
-3. Deploy `SolidityMLDSA44Verifier(core, helper)`. Its constructor checks the same hash.
-4. For each key, call `KeyStore.store(0x02 ‖ pk)`, then `prepareKey(abi.encodePacked(pointer))`, then
+1. Deploy the helper runtime verbatim, using an init code that returns `vendor/f1600_170.hex`. Its
+   `EXTCODEHASH` must be `0x4afb4435879cdf8e50474c7aab2bc3a679caed432550ad6dba64f509309a817b`. One
+   helper per chain is enough.
+2. Deploy `MLDSA44Verifier(helper)`, the core. Its constructor checks the helper's code hash.
+3. Deploy `MLDSA44ExpandedKeyStore(helper)`. Its constructor checks the same hash.
+4. Deploy `SolidityMLDSA44Verifier(core, store)`.
+5. For each key, call `KeyStore.store(0x02 ‖ pk)`, then `prepareKey(abi.encodePacked(pointer))`, then
    install `QuantumValidator` with `(verifier, pointer)`.
 
-The core builds only through solc's IR pipeline. `foundry.toml` limits via-IR to
-`lib/evm-ml-dsa-verifier/src/MLDSA44Verifier.sol` (`compilation_restrictions`), so every other
+The vendored core builds only through solc's IR pipeline. `foundry.toml` limits via-IR to
+`vendor/{MLDSA44Verifier,Decode,Ntt,InvNtt}.sol` (`compilation_restrictions`), so every other
 contract keeps legacy codegen. Settings are solc 0.8.30, EVM `prague`, 10,000 optimizer runs.
 
 ## Gas and size
@@ -81,37 +91,35 @@ included.
 
 | Operation | Gas |
 |---|---:|
-| `verify`, inline key | 1,234,975 |
-| `verify`, KeyStore pointer | 1,237,441 |
-| `QuantumValidator.validateUserOp` (pointer) | 1,246,034 |
-| `prepareKey`, once per key: ~5.5M expansion plus ~4.1M code deposit | 9,916,566 |
+| `verify`, inline key | 1,236,247 |
+| `verify`, KeyStore pointer | 1,238,703 |
+| `QuantumValidator.validateUserOp` (pointer) | 1,247,542 |
+| `prepareKey`, once per key: ~5.5M expansion plus ~4.1M code deposit | 9,920,372 |
 
 | Runtime | Bytes (EIP-170 limit 24,576) |
 |---|---:|
-| `SolidityMLDSA44Verifier` | 6,199 |
-| `MLDSA44Verifier` (core) | 24,032 |
+| `SolidityMLDSA44Verifier` | 3,616 |
+| `MLDSA44ExpandedKeyStore` | 4,950 |
+| `MLDSA44Verifier` (core) | 24,163 |
 | Keccak-f[1600] helper | 21,622 |
 | Prepared blob | 20,545 |
 
 ## Third-party code
 
-`lib/evm-ml-dsa-verifier` is a git submodule. Nothing in it is copied or modified.
-
-- Origin: <https://github.com/fireblocks-labs/evm-ml-dsa-verifier>, pinned at commit
-  `cca262b537a5ac2ee55efb427e5c61de0308e566` (the first public release, 2026-09-02)
-- License: MIT, "Copyright (c) 2026 Fireblocks Ltd." (see `lib/evm-ml-dsa-verifier/LICENSE`)
-- Used: `src/MLDSA44Verifier.sol`, `src/Decode.sol`, `src/Ntt.sol`, `src/InvNtt.sol`,
-  `src/FastKeccak170.sol`, `src/IMLDSAVerifier.sol` and `helpers/f1600_170.hex`. Upstream
-  `prepare/prepare.py` generated the reference hashes in `vectors/mldsa/prepared-44.json`.
-- Upstream calls this unaudited research code. Its `docs/SAFETY.md` and
-  `docs/FORMAL_VERIFICATION.md` list what has been checked: NIST ACVP and Wycheproof vectors,
-  differential fuzzing, and Z3 and Lean proofs of the arithmetic bounds.
+`vendor/` holds the core and helper from <https://github.com/fireblocks-labs/evm-ml-dsa-verifier> at
+commit `cca262b537a5ac2ee55efb427e5c61de0308e566`. It is MIT licensed, "Copyright (c) 2026
+Fireblocks Ltd.", and the upstream `LICENSE` is in `vendor/`. Two files carry a 9-line patch that
+removes the GAS reads; the rest are byte-identical to upstream. `vendor/README.md` has the exact
+modifications. Upstream `prepare/prepare.py` generated the reference hashes in
+`vectors/mldsa/prepared-44.json`.
 
 ## Caveats
 
-- No one has audited the core, the helper or this adapter.
-- The core and helper addresses are fixed at deployment. The helper is pinned by code hash. The core
-  is not, because its runtime embeds the helper address.
+- No one has audited the core, the helper or this adapter. Upstream's `docs/SAFETY.md` and
+  `docs/FORMAL_VERIFICATION.md` list what has been checked.
+- The core and store addresses are fixed when the verifier is deployed. Both are bound to the
+  helper by code hash. They are not pinned by code hash themselves, because their runtimes embed
+  the helper address.
 - Some ML-DSA public keys are degenerate: for example, keys with `t1 = 0`, or keys whose
   `2^13·t1` lifts to a value near 0 mod q. Anyone can forge signatures under such a key without a
   secret key. This is a property of FIPS 204 itself, so every conforming verifier accepts these
@@ -119,11 +127,11 @@ included.
   degenerate. See upstream `docs/SAFETY.md` section 3.1.
 - SampleInBall in the core keeps squeezing SHAKE-256 until it has drawn τ = 39 positions, as FIPS
   204 specifies. A second permutation is needed with probability below 2^-200, and gas bounds the
-  loop. `prepareKey` caps RejNTTPoly at 32 SHAKE-128 blocks; an honest key needs 5 or 6.
-- The core has 544 bytes of EIP-170 margin, so it cannot absorb more code. This is why the adapter
-  is a separate contract.
+  loop. `prepare` caps RejNTTPoly at 32 SHAKE-128 blocks; an honest key needs 5 or 6.
+- The core has 413 bytes of EIP-170 margin.
 
 ## Tests
 
-`test/fallback/SolidityMLDSA44Verifier.t.sol` runs under plain `forge test`. It needs `node`, with
-`npm ci` run once in `scripts/devsign`, for the live dev-signer signatures it gets over FFI.
+`test/fallback/SolidityMLDSA44Verifier.t.sol` runs under plain `forge test`. The live dev-signer
+tests call `scripts/devsign` over FFI. They need `node`, with `npm ci` run once in `scripts/devsign`,
+and they are skipped when it is not available.
