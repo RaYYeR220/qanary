@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {ArbOneFork} from "./ArbOneFork.sol";
 import {KeyStore} from "../../src/KeyStore.sol";
 import {PQSafeOwner} from "../../src/safe/PQSafeOwner.sol";
@@ -49,12 +50,20 @@ interface ISafe130 {
 ///         unchanged, keeps its 9-of-12 policy, and executes with nine PQ signatures but not eight.
 /// @dev The PQ owners use `MockVerifier` keys (plain forge cannot execute Stylus programs). Safe 1.3.0
 ///      validates contract signatures through the legacy `isValidSignature(bytes txHashData, bytes)`
-///      (magic `0x20c13b0b`), which `PQSafeOwner` implements over `keccak256(txHashData)`.
+///      (magic `0x20c13b0b`); each PQ key signs `PQSafeOwner.safeMessageDigest(council, keccak256(txHashData))`,
+///      the Safe transaction hash bound to the council Safe.
 contract SecurityCouncilForkSimulationTest is ArbOneFork {
     /// @dev Arbitrum Security Council emergency Safe on Arbitrum One.
     ISafe130 internal constant COUNCIL = ISafe130(0x423552c0F05baCCac5Bfa91C6dCF1dc53a0A1641);
     /// @dev GnosisSafeL2 1.3.0 singleton behind the council proxy.
     address internal constant SAFE_L2_130_SINGLETON = 0x3E5c63644E683549055b9Be8653de26E0B4CD36E;
+    /// @dev A second Safe 1.3.0 on Arbitrum One owned by the same twelve council members at the pinned block.
+    ISafe130 internal constant COUNCIL_TWIN = ISafe130(0xADd68bCb0f66878aB9D37a447C7b9067C5dfa941);
+    /// @dev Canonical Safe 1.3.0 CompatibilityFallbackHandler, the fallback handler of both Safes.
+    address internal constant HANDLER_130 = 0xf48f2B2d2a534e402487b3ee7C18c33Aec0Fe5e4;
+    /// @dev Safe `FallbackManager` storage slot, keccak256("fallback_manager.handler.address").
+    bytes32 internal constant FALLBACK_HANDLER_SLOT =
+        0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
     address internal constant SENTINEL = address(0x1);
     uint256 internal constant OWNERS = 12;
     uint256 internal constant THRESHOLD = 9;
@@ -122,7 +131,8 @@ contract SecurityCouncilForkSimulationTest is ArbOneFork {
                 statics = abi.encodePacked(statics, bytes32(uint256(uint160(signers[i]))), bytes32(0), uint8(1));
                 continue;
             }
-            bytes memory sig = _pqSig(keyOf[signers[i]], txHash);
+            bytes memory sig =
+                _pqSig(keyOf[signers[i]], PQSafeOwner(signers[i]).safeMessageDigest(address(COUNCIL), txHash));
             statics = abi.encodePacked(statics, bytes32(uint256(uint160(signers[i]))), bytes32(offset), uint8(0));
             dynamics = abi.encodePacked(dynamics, bytes32(sig.length), sig);
             offset += 32 + sig.length;
@@ -224,8 +234,9 @@ contract SecurityCouncilForkSimulationTest is ArbOneFork {
         bytes32 txHash = _txHash(noop);
 
         // Eight signatures packed for eight signers: their offsets point inside the 9 * 65-byte static part.
+        bytes memory eightPacked = _pqSignatures(THRESHOLD - 1, txHash);
         vm.expectRevert(bytes("GS021"));
-        _exec(noop, _pqSignatures(THRESHOLD - 1, txHash));
+        _exec(noop, eightPacked);
 
         // Only the eight static entries (shorter than 9 * 65 bytes).
         address[] memory eight = new address[](THRESHOLD - 1);
@@ -246,6 +257,56 @@ contract SecurityCouncilForkSimulationTest is ArbOneFork {
         (bytes memory s, bytes memory d) = _pack(padded, new bool[](THRESHOLD), txHash, THRESHOLD);
         vm.expectRevert(bytes("GS026"));
         _exec(noop, abi.encodePacked(s, d));
+    }
+
+    /// @dev Contract signatures of the first `count` PQ owners approving `h` for `safe`.
+    function _pqSignaturesFor(address safe, uint256 count, bytes32 h) internal view returns (bytes memory) {
+        bytes memory statics;
+        bytes memory dynamics;
+        uint256 offset = count * 65;
+        for (uint256 i = 0; i < count; ++i) {
+            address signer = pqOwners[i];
+            bytes memory sig = _pqSig(keyOf[signer], PQSafeOwner(signer).safeMessageDigest(safe, h));
+            statics = abi.encodePacked(statics, bytes32(uint256(uint160(signer))), bytes32(offset), uint8(0));
+            dynamics = abi.encodePacked(dynamics, bytes32(sig.length), sig);
+            offset += 32 + sig.length;
+        }
+        return abi.encodePacked(statics, dynamics);
+    }
+
+    /// @dev ERC-1271 through the council's real Safe 1.3.0 fallback handler, which hands contract owners the
+    ///      raw message `abi.encode(appHash)`. Nine PQ approvals bound to the council Safe make it answer the
+    ///      magic value; the same bytes are rejected by a second Safe that the same twelve PQ owners control.
+    function test_forkSimulation_erc1271_boundToTheCouncilSafe() public onlyFork {
+        assertEq(COUNCIL_TWIN.VERSION(), "1.3.0");
+        assertEq(address(uint160(uint256(vm.load(address(COUNCIL), FALLBACK_HANDLER_SLOT)))), HANDLER_130);
+        assertEq(address(uint160(uint256(vm.load(address(COUNCIL_TWIN), FALLBACK_HANDLER_SLOT)))), HANDLER_130);
+
+        // Simulation: the twin is re-owned by the same twelve PQ owners (it shares the council's members).
+        address[] memory twinOwners = COUNCIL_TWIN.getOwners();
+        assertEq(twinOwners.length, OWNERS);
+        address prev = SENTINEL;
+        for (uint256 i = 0; i < OWNERS; ++i) {
+            address pq = pqOwners[i];
+            vm.prank(address(COUNCIL_TWIN));
+            COUNCIL_TWIN.swapOwner(prev, twinOwners[i], pq);
+            prev = pq;
+        }
+        for (uint256 i = 0; i < OWNERS; ++i) {
+            assertTrue(COUNCIL_TWIN.isOwner(pqOwners[i]));
+        }
+
+        bytes32 appHash = keccak256("an off-chain approval meant for the emergency council Safe only");
+        bytes memory sigs = _pqSignaturesFor(address(COUNCIL), THRESHOLD, keccak256(abi.encode(appHash)));
+        assertEq(IERC1271(address(COUNCIL)).isValidSignature(appHash, sigs), IERC1271.isValidSignature.selector);
+        vm.expectRevert(bytes("GS024"));
+        IERC1271(address(COUNCIL_TWIN)).isValidSignature(appHash, sigs);
+
+        // the twin accepts approvals bound to itself
+        bytes memory twinSigs = _pqSignaturesFor(address(COUNCIL_TWIN), THRESHOLD, keccak256(abi.encode(appHash)));
+        assertEq(
+            IERC1271(address(COUNCIL_TWIN)).isValidSignature(appHash, twinSigs), IERC1271.isValidSignature.selector
+        );
     }
 
     /// @dev A former (classical) owner submitting the transaction itself no longer counts as a signer.

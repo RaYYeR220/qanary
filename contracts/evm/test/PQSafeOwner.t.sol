@@ -2,10 +2,12 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {Safe} from "@safe/Safe.sol";
 import {Enum} from "@safe/common/Enum.sol";
 import {SafeProxyFactory} from "@safe/proxies/SafeProxyFactory.sol";
 import {SafeProxy} from "@safe/proxies/SafeProxy.sol";
+import {CompatibilityFallbackHandler} from "@safe/handler/CompatibilityFallbackHandler.sol";
 import {PQSafeOwner} from "../src/safe/PQSafeOwner.sol";
 import {PQSafeOwnerFactory} from "../src/safe/PQSafeOwnerFactory.sol";
 import {KeyStore} from "../src/KeyStore.sol";
@@ -50,12 +52,22 @@ contract PQSafeOwnerTest is Test {
         return abi.encode(abi.encodePacked(ptr), hash);
     }
 
+    /// @dev Signature by owner `i` approving `hash` for `safe`: over the bound digest.
+    function _ownerSig(uint256 i, address safe, bytes32 hash) internal view returns (bytes memory) {
+        return _sig(ptrs[i], owners[i].safeMessageDigest(safe, hash));
+    }
+
     function _newSafe(uint256 nonce) internal returns (Safe safe) {
+        return _newSafeWithHandler(nonce, address(0));
+    }
+
+    function _newSafeWithHandler(uint256 nonce, address handler) internal returns (Safe safe) {
         address[] memory o = new address[](3);
-        for (uint256 i = 0; i < 3; i++) o[i] = address(owners[i]);
-        bytes memory init = abi.encodeCall(
-            Safe.setup, (o, 3, address(0), "", address(0), address(0), 0, payable(address(0)))
-        );
+        for (uint256 i = 0; i < 3; i++) {
+            o[i] = address(owners[i]);
+        }
+        bytes memory init =
+            abi.encodeCall(Safe.setup, (o, 3, address(0), "", handler, address(0), 0, payable(address(0))));
         safe = Safe(payable(address(proxyFactory.createProxyWithNonce(address(singleton), init, nonce))));
     }
 
@@ -68,7 +80,7 @@ contract PQSafeOwnerTest is Test {
         bytes[] memory s = new bytes[](count);
         for (uint256 i = 0; i < count; i++) {
             o[i] = address(owners[i]);
-            s[i] = _sig(ptrs[i], h);
+            s[i] = _ownerSig(i, address(safe), h);
         }
         return SafeSig.contractSignatures(o, s);
     }
@@ -77,24 +89,100 @@ contract PQSafeOwnerTest is Test {
         return safe.execTransaction(to, value, "", Enum.Operation.Call, 0, 0, 0, address(0), payable(address(0)), sigs);
     }
 
+    // In the direct calls below the test contract is the asking Safe (`msg.sender`).
+
     function test_isValidSignature_bytes32() public view {
         bytes32 h = keccak256("m");
-        assertEq(owners[0].isValidSignature(h, _sig(ptrs[0], h)), MAGIC);
-        assertEq(owners[0].isValidSignature(h, _sig(ptrs[1], h)), INVALID);
-        assertEq(owners[0].isValidSignature(keccak256("x"), _sig(ptrs[0], h)), INVALID);
+        assertEq(owners[0].isValidSignature(h, _ownerSig(0, address(this), h)), MAGIC);
+        assertEq(owners[0].isValidSignature(h, _sig(ptrs[1], owners[0].safeMessageDigest(address(this), h))), INVALID);
+        assertEq(owners[0].isValidSignature(keccak256("x"), _ownerSig(0, address(this), h)), INVALID);
+        // the key never signs the bare hash
+        assertEq(owners[0].isValidSignature(h, _sig(ptrs[0], h)), INVALID);
     }
 
     function test_isValidSignature_legacyBytes() public view {
         bytes memory data = hex"deadbeef";
         bytes32 h = keccak256(data);
-        assertEq(owners[0].isValidSignature(data, _sig(ptrs[0], h)), LEGACY_MAGIC);
-        assertEq(owners[0].isValidSignature(data, _sig(ptrs[0], keccak256("other"))), INVALID);
+        assertEq(owners[0].isValidSignature(data, _ownerSig(0, address(this), h)), LEGACY_MAGIC);
+        assertEq(owners[0].isValidSignature(data, _ownerSig(0, address(this), keccak256("other"))), INVALID);
+        assertEq(owners[0].isValidSignature(data, _sig(ptrs[0], h)), INVALID);
     }
 
     function test_verifierRevert_returnsInvalid() public {
         mv.revertOn(abi.encodePacked(ptrs[0]));
         bytes32 h = keccak256("m");
-        assertEq(owners[0].isValidSignature(h, _sig(ptrs[0], h)), INVALID);
+        assertEq(owners[0].isValidSignature(h, _ownerSig(0, address(this), h)), INVALID);
+    }
+
+    function test_safeMessageDigest_isEip712() public view {
+        PQSafeOwner o = owners[0];
+        bytes32 domain = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("QanaryPQSafeOwner"),
+                keccak256("1"),
+                block.chainid,
+                address(o)
+            )
+        );
+        assertEq(o.SAFE_MESSAGE_TYPEHASH(), keccak256("SafeMessage(address safe,bytes32 hash)"));
+        bytes32 h = keccak256("m");
+        address safe = address(0x5AFE);
+        bytes32 expected =
+            keccak256(abi.encodePacked(hex"1901", domain, keccak256(abi.encode(o.SAFE_MESSAGE_TYPEHASH(), safe, h))));
+        assertEq(o.safeMessageDigest(safe, h), expected);
+        (, string memory name, string memory version, uint256 chainId, address verifyingContract,,) = o.eip712Domain();
+        assertEq(name, "QanaryPQSafeOwner");
+        assertEq(version, "1");
+        assertEq(chainId, block.chainid);
+        assertEq(verifyingContract, address(o));
+    }
+
+    /// @dev The same approval asked by another Safe, on another chain, or of another owner contract
+    ///      holding the same key is invalid, on both entry points.
+    function test_signatureBoundToSafeChainAndOwner() public {
+        bytes32 h = keccak256("app digest without the owner in it");
+        bytes memory forThis = _ownerSig(0, address(this), h);
+        assertEq(owners[0].isValidSignature(h, forThis), MAGIC);
+
+        vm.prank(address(0x5AFE));
+        assertEq(owners[0].isValidSignature(h, forThis), INVALID);
+        bytes memory data = abi.encode(h);
+        bytes memory legacyForThis = _ownerSig(0, address(this), keccak256(data));
+        assertEq(owners[0].isValidSignature(data, legacyForThis), LEGACY_MAGIC);
+        vm.prank(address(0x5AFE));
+        assertEq(owners[0].isValidSignature(data, legacyForThis), INVALID);
+
+        MockVerifier mv2 = new MockVerifier();
+        PQSafeOwner twin = factory.deploy(address(mv2), ptrs[0]); // same key, another verifier deployment
+        assertEq(twin.isValidSignature(h, forThis), INVALID);
+
+        uint256 chain = vm.getChainId();
+        vm.chainId(chain + 1);
+        assertEq(owners[0].isValidSignature(h, forThis), INVALID);
+        vm.chainId(chain);
+        assertEq(owners[0].isValidSignature(h, forThis), MAGIC);
+    }
+
+    /// @dev Safe 1.4.1 ERC-1271 through its CompatibilityFallbackHandler: each owner signs the Safe's
+    ///      message hash bound to that Safe; the approval does not carry over to a second Safe with the
+    ///      same owners.
+    function test_safe141_erc1271_boundToTheSafe() public {
+        CompatibilityFallbackHandler handler = new CompatibilityFallbackHandler();
+        Safe a = _newSafeWithHandler(5, address(handler));
+        Safe b = _newSafeWithHandler(6, address(handler));
+        bytes32 appHash = keccak256("permit for Safe A");
+        bytes32 h = keccak256(handler.encodeMessageDataForSafe(a, abi.encode(appHash)));
+        address[] memory o = new address[](3);
+        bytes[] memory s = new bytes[](3);
+        for (uint256 i = 0; i < 3; i++) {
+            o[i] = address(owners[i]);
+            s[i] = _ownerSig(i, address(a), h);
+        }
+        bytes memory sigs = SafeSig.contractSignatures(o, s);
+        assertEq(IERC1271(address(a)).isValidSignature(appHash, sigs), MAGIC);
+        vm.expectRevert(bytes("GS024"));
+        IERC1271(address(b)).isValidSignature(appHash, sigs);
     }
 
     function test_safe_3of3_executes() public {
@@ -117,7 +205,9 @@ contract PQSafeOwnerTest is Test {
         _exec(safe, address(0xBEEF), 1, sigs);
         // A signature blob shorter than threshold * 65 bytes is rejected outright.
         bytes memory shortSigs = new bytes(194);
-        for (uint256 i = 0; i < 194; i++) shortSigs[i] = sigs[i];
+        for (uint256 i = 0; i < 194; i++) {
+            shortSigs[i] = sigs[i];
+        }
         vm.expectRevert("GS020");
         _exec(safe, address(0xBEEF), 1, shortSigs);
     }

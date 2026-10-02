@@ -44,6 +44,11 @@ import {ISafe} from "./interfaces/ISafe.sol";
 ///      functions act on `msg.sender == account`; approval-class selectors (`approve`,
 ///      `increaseAllowance`, `setApprovalForAll`, Permit2 `approve`, EIP-2612 `permit`), which would
 ///      let a spender pull funds later, outside the executor; and empty calldata without value.
+///      Module detection asks the account (`isModuleInstalled` / `isModuleEnabled`), so it is only
+///      as complete as the account's answer, and for hooks it is best-effort: Kernel v3.3 answers
+///      `false` for module type 4 (its hooks hang off validators, executors and selectors, e.g.
+///      `validationConfig(vId).hook`), and so does OZ's `AccountERC7579` without hooks. A Kernel
+///      hook, including a per-validation hook, is therefore not detected: never allowlist one.
 ///      Under these rules the hot key can move at most `cap * bps / 10000` plus one window of
 ///      refill of each tracked asset per window. The bound does NOT hold when:
 ///      - an allowlisted call converts an untracked position or credit into a tracked asset (vault
@@ -55,6 +60,11 @@ import {ISafe} from "./interfaces/ISafe.sol";
 ///        contract that is not a detectable module: a Safe's fallback handler or guard, a Safe7579
 ///        adapter seen through the ERC-7579 interface, a fallback handler called with a selector
 ///        other than the one it is registered for, an external registry or position manager.
+///
+///      Incident response: rotate the hot key first (`setHotSigner`, which also kills pending
+///      signatures). Lowering caps with `setCap` or `configure` keeps the current bucket level
+///      (clamped to the new cap), so a compromised key keeps at most what it could already move;
+///      an uninstall followed by a fresh install starts every bucket full.
 ///
 ///      Safe: the native `disableModule` does not call `onUninstall`, so the configuration survives
 ///      and comes back on a later re-enable. Batch `executor.onUninstall("")` with `disableModule`.
@@ -229,12 +239,18 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
 
     // ------------------------------------------------------------------ account configuration
 
-    /// @notice (Re)configures the calling account, replacing any previous configuration: buckets
-    ///         start full and earlier allowlist entries stop applying.
+    /// @notice (Re)configures the calling account, replacing any previous configuration. Earlier
+    ///         allowlist entries stop applying. On a reconfiguration, an asset that stays tracked
+    ///         keeps its bucket: `available = min(level before, new effective cap)`, where the level
+    ///         before is refilled under the old configuration and the new effective cap is
+    ///         `cap * bps / 10000` at the current threat level under the new one. A newly tracked
+    ///         asset (and every asset on a first install) starts full.
     /// @dev Rules: `window > 0`; `assets.length == caps.length <= MAX_ASSETS`; no duplicate
     ///      assets; `levelBps[i] <= 10000` and non-increasing; `registry` is deployed code above the
     ///      precompile range; a SECP256K1 signer needs `eoa != 0`, a P256 signer `pubX != 0` and
     ///      `pubY != 0`; no allow entry uses an approval-class selector. Pending signatures die.
+    ///      The carry-over reads the old and the new registry; a registry that reverts counts as
+    ///      scale 0 there, so the carried buckets start empty (fail closed) instead of blocking.
     /// @param s The new configuration.
     function configure(Setup calldata s) external nonReentrant {
         _configure(msg.sender, s);
@@ -389,6 +405,9 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
         }
         _requireValidSigner(s.signer);
 
+        // Levels of the buckets that stay tracked, refilled under the old configuration.
+        (bool[] memory kept, uint256[] memory levels) = _carriedLevels(account, s.assets);
+
         _wipe(account);
         uint256 gen = _generation[account];
         Config storage c = _config[account];
@@ -397,13 +416,22 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
         c.window = s.window;
         c.levelBps = s.levelBps;
         c.signer = s.signer;
+        uint16 bps = _anyTrue(kept) ? _tryEffectiveBps(c) : 0;
         for (uint256 i = 0; i < n; ++i) {
             address asset = s.assets[i];
             if (_tracked[account][asset]) revert InvalidSetup();
             _tracked[account][asset] = true;
             c.assets.push(asset);
-            _buckets[account][asset] = Bucket(s.caps[i], s.caps[i], uint64(block.timestamp));
-            emit CapSet(account, asset, s.caps[i]);
+            uint128 cap = s.caps[i];
+            uint128 level = cap;
+            if (kept[i]) {
+                uint256 eff = uint256(cap) * bps / BPS;
+                // casting to 'uint128' is safe because min(levels[i], eff) <= eff <= cap <= type(uint128).max
+                // forge-lint: disable-next-line(unsafe-typecast)
+                level = uint128(levels[i] < eff ? levels[i] : eff);
+            }
+            _buckets[account][asset] = Bucket(cap, level, uint64(block.timestamp));
+            emit CapSet(account, asset, cap);
         }
         for (uint256 i = 0; i < s.allow.length; ++i) {
             AllowEntry memory e = s.allow[i];
@@ -413,6 +441,51 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
         }
         emit HotSignerSet(account, s.signer.family, s.signer.eoa, s.signer.pubX, s.signer.pubY);
         emit Configured(account, s.kind, s.registry);
+    }
+
+    /// @dev For each of `assets` that the current configuration of `account` tracks: `kept[i]` and
+    ///      the bucket level refilled under that configuration (`_tryEffectiveBps`, old window).
+    ///      Nothing is kept on a first install.
+    function _carriedLevels(address account, address[] memory assets)
+        private
+        view
+        returns (bool[] memory kept, uint256[] memory levels)
+    {
+        uint256 n = assets.length;
+        kept = new bool[](n);
+        levels = new uint256[](n);
+        Config storage old = _config[account];
+        if (address(old.registry) == address(0)) return (kept, levels);
+        for (uint256 i = 0; i < n; ++i) {
+            kept[i] = _tracked[account][assets[i]];
+        }
+        if (!_anyTrue(kept)) return (kept, levels);
+        uint16 bps = _tryEffectiveBps(old);
+        for (uint256 i = 0; i < n; ++i) {
+            if (kept[i]) levels[i] = _refilled(_buckets[account][assets[i]], bps, old.window);
+        }
+    }
+
+    function _anyTrue(bool[] memory flags) private pure returns (bool) {
+        for (uint256 i = 0; i < flags.length; ++i) {
+            if (flags[i]) return true;
+        }
+        return false;
+    }
+
+    /// @dev `_effectiveBps` that never reverts: a reverting registry call counts as scale 0.
+    function _tryEffectiveBps(Config storage c) private view returns (uint16) {
+        IQuantumCanaryRegistry r = c.registry;
+        try r.familyBroken(uint8(c.signer.family)) returns (bool broken) {
+            if (broken) return 0;
+        } catch {
+            return 0;
+        }
+        try r.ladderLevel() returns (uint8 level) {
+            return level < LEVELS ? c.levelBps[level] : 0;
+        } catch {
+            return 0;
+        }
     }
 
     /// @dev Deletes config, buckets and tracked flags, bumps the generation (orphaning the

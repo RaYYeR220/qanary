@@ -715,25 +715,84 @@ contract SolidityMLDSA44VerifierTest is DevSign {
     }
 
     /// @dev The account keeps its KeyStore pointer when it changes verifier: `rotateKey(verifier,
-    ///      keyPtr)` with the same pointer, here to a second deployment standing in for the Stylus
-    ///      one. It shares the expanded-key store, so the key needs no second preparation.
-    function test_validator_rotateVerifier_keepsKeyPointer() public {
-        (bytes memory pk, bytes32 userOpHash, bytes memory sig) = _fixture("mldsa44_devsign");
-        address ptr = _ptr(pk);
+    ///      keyPtr, proof)` with the same pointer, here to a second deployment standing in for the
+    ///      Stylus one. It shares the expanded-key store, so the key needs no second preparation. The
+    ///      proof is a live ML-DSA-44 signature over `rotationDigest`.
+    function test_validator_rotateVerifier_keepsKeyPointer() public devsign {
+        bytes32 seed = _seed("rotate", 0);
+        address ptr = _ptr(pqKeygen("mldsa44", seed));
         v.prepareKey(abi.encodePacked(ptr));
         QuantumValidator qv = new QuantumValidator();
         _install(qv, address(v), ptr);
 
         SolidityMLDSA44Verifier next = new SolidityMLDSA44Verifier(core, store);
         assertTrue(next.isPrepared(abi.encodePacked(ptr)), "prepared keys outlive the verifier");
+        bytes memory proof = pqSign("mldsa44", seed, abi.encodePacked(qv.rotationDigest(ACCOUNT, address(next), ptr)));
         vm.prank(ACCOUNT);
-        qv.rotateKey(address(next), ptr);
+        qv.rotateKey(address(next), ptr, proof);
+        assertEq(qv.configOf(ACCOUNT).verifier, address(next));
 
+        bytes32 userOpHash = bytes32(vm.randomUint());
         PackedUserOperation memory op;
         op.sender = ACCOUNT;
-        op.signature = sig;
+        op.signature = pqSign("mldsa44", seed, abi.encodePacked(userOpHash));
         vm.prank(ACCOUNT);
         assertEq(qv.validateUserOp(op, userOpHash), 0);
-        assertEq(qv.configOf(ACCOUNT).verifier, address(next));
+    }
+
+    /// @dev Without FFI: the fixture signature is over another message, so it is not a proof of
+    ///      possession, and the rotation is refused.
+    function test_validator_rotate_requiresProofOfPossession() public {
+        (bytes memory pk,, bytes memory sig) = _fixture("mldsa44_devsign");
+        address ptr = _ptr(pk);
+        v.prepareKey(abi.encodePacked(ptr));
+        QuantumValidator qv = new QuantumValidator();
+        _install(qv, address(v), ptr);
+        SolidityMLDSA44Verifier next = new SolidityMLDSA44Verifier(core, store);
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.rotateKey(address(next), ptr, sig);
+        assertEq(qv.configOf(ACCOUNT).verifier, address(v));
+    }
+
+    /// @dev An unprepared key never verifies (`KeyNotPrepared`), so it cannot sign its proof and the
+    ///      account cannot rotate onto it; once prepared, the same proof is accepted.
+    function test_validator_rotateToUnpreparedKey_refusedUntilPrepared() public devsign {
+        (bytes memory pk0,,) = _fixture("mldsa44_devsign");
+        address ptr0 = _ptr(pk0);
+        v.prepareKey(abi.encodePacked(ptr0));
+        QuantumValidator qv = new QuantumValidator();
+        _install(qv, address(v), ptr0);
+
+        bytes32 seed = _seed("rotate-unprepared", 0);
+        address ptr = _ptr(pqKeygen("mldsa44", seed));
+        bytes memory proof = pqSign("mldsa44", seed, abi.encodePacked(qv.rotationDigest(ACCOUNT, address(v), ptr)));
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.rotateKey(address(v), ptr, proof);
+
+        v.prepareKey(abi.encodePacked(ptr));
+        vm.prank(ACCOUNT);
+        qv.rotateKey(address(v), ptr, proof);
+        assertEq(qv.configOf(ACCOUNT).keyPtr, ptr);
+    }
+
+    /// @dev The Solidity verifier describes itself as post-quantum, so it can be the root and a guardian.
+    function test_validator_acceptsSolidityVerifierAsRootAndGuardian() public {
+        (bytes memory pk,,) = _fixture("mldsa44_devsign");
+        address ptr = _ptr(pk);
+        QuantumValidator qv = new QuantumValidator();
+        bytes[] memory guardians = new bytes[](1);
+        guardians[0] = abi.encodePacked(address(v), ptr);
+        bytes memory data = abi.encode(
+            QuantumValidator.InstallData({
+                verifier: address(v), keyPtr: ptr, guardians: guardians, threshold: 1, delay: qv.MIN_RECOVERY_DELAY()
+            })
+        );
+        vm.prank(ACCOUNT);
+        qv.onInstall(data);
+        (bytes[] memory stored, uint8 threshold,) = qv.guardiansOf(ACCOUNT);
+        assertEq(stored.length, 1);
+        assertEq(threshold, 1);
     }
 }

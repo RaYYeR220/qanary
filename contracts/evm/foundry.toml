@@ -23,9 +23,9 @@ compilation_restrictions = [
 ]
 [lint]
 # third-party code, kept as close to upstream as possible
-ignore = ["src/fallback/vendor/**"]
+ignore = ["src/fallback/vendor/**", "test/vendor/**"]
 [fmt]
-ignore = ["src/fallback/vendor/**"]
+ignore = ["src/fallback/vendor/**", "test/vendor/**"]
 [fuzz]
 runs = 1000
 [invariant]

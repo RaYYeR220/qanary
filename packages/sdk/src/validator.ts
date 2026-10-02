@@ -108,10 +108,18 @@ export function kernelErc1271Signature(validator: Address, pqSignature: Hex): He
   return concat([KERNEL_VALIDATOR_SIG_PREFIX, validator, pqSignature]);
 }
 
+/** `QuantumValidator.MIN_RECOVERY_DELAY`: at least 24 hours between a recovery proposal and its execution. */
+export const MIN_RECOVERY_DELAY_SECONDS = 86_400;
+
 /**
  * The call that sets the account's recovery guardians (`QuantumValidator.setGuardians`), executed
  * by the account in a user operation's execution phase. Guardians are ERC-7913 signers
  * (`verifier ‖ key`); `threshold = 0` with no guardians disables recovery.
+ *
+ * Every guardian's verifier must be a post-quantum verifier: the validator calls its `schemes()`
+ * and rejects classical ones (P-256, WebAuthn, RSA). Prefer guardians on a different verifier than
+ * the root key (e.g. the Solidity ML-DSA-44 fallback), so recovery still works if the root's
+ * Stylus program expires or cannot be reactivated.
  */
 export function setGuardiansCall(
   validator: Address,
@@ -119,6 +127,9 @@ export function setGuardiansCall(
   threshold: number,
   delaySeconds: number,
 ): { to: Address; value: bigint; data: Hex } {
+  if (threshold > 0 && delaySeconds < MIN_RECOVERY_DELAY_SECONDS) {
+    throw new Error(`setGuardians: delay must be at least ${MIN_RECOVERY_DELAY_SECONDS} seconds`);
+  }
   return {
     to: validator,
     value: 0n,
@@ -126,6 +137,108 @@ export function setGuardiansCall(
       abi: quantumValidatorAbi,
       functionName: 'setGuardians',
       args: [[...guardians], threshold, delaySeconds],
+    }),
+  };
+}
+
+/** Inputs of the `Rotation` and `Recovery` digests: the account, the new root key and the nonce. */
+export type KeyChangeDigestParams = {
+  /** QuantumValidator module. */
+  validator: Address;
+  chainId: number;
+  account: Address;
+  /** New ERC-7913 verifier. */
+  verifier: Address;
+  /** New KeyStore pointer. */
+  keyPtr: Address;
+  /** `QuantumValidator.recoveryNonce(account)` when the rotation or proposal executes (`readRecoveryNonce`). */
+  nonce: bigint;
+};
+
+function keyChangeDigest(primaryType: 'Rotation' | 'Recovery', p: KeyChangeDigestParams): Hex {
+  return hashTypedData({
+    domain: { ...QUANTUM_VALIDATOR_DOMAIN, chainId: p.chainId, verifyingContract: p.validator },
+    types: {
+      [primaryType]: [
+        { name: 'account', type: 'address' },
+        { name: 'verifier', type: 'address' },
+        { name: 'keyPtr', type: 'address' },
+        { name: 'nonce', type: 'uint256' },
+      ],
+    },
+    primaryType,
+    message: { account: p.account, verifier: p.verifier, keyPtr: p.keyPtr, nonce: p.nonce },
+  });
+}
+
+/**
+ * `QuantumValidator.rotationDigest(account, verifier, keyPtr)`: the EIP-712 digest of
+ * `Rotation(address account,address verifier,address keyPtr,uint256 nonce)`. The NEW key signs it
+ * as proof of possession for `rotateKeyCall` and `proposeRecoveryCall`; `nonce` is the account's
+ * recovery nonce at execution time (anything earlier in the same batch that bumps it, such as
+ * `setGuardians`, invalidates the proof).
+ */
+export function rotationDigest(p: KeyChangeDigestParams): Hex {
+  return keyChangeDigest('Rotation', p);
+}
+
+/**
+ * `QuantumValidator.recoveryDigest(account, verifier, keyPtr)`: the EIP-712 digest of
+ * `Recovery(address account,address verifier,address keyPtr,uint256 nonce)` that guardians sign.
+ */
+export function recoveryDigest(p: KeyChangeDigestParams): Hex {
+  return keyChangeDigest('Recovery', p);
+}
+
+/** Reads `QuantumValidator.recoveryNonce(account)`, the nonce of `rotationDigest` / `recoveryDigest`. */
+export function readRecoveryNonce(client: Client, validator: Address, account: Address): Promise<bigint> {
+  return readContract(client, {
+    address: validator,
+    abi: quantumValidatorAbi,
+    functionName: 'recoveryNonce',
+    args: [account],
+  });
+}
+
+/**
+ * The call that replaces the account's root key (`QuantumValidator.rotateKey`), executed by the
+ * account. `proof` is the new key's signature over `rotationDigest` for this account; the
+ * validator rejects the rotation without it, and rejects a verifier that is not post-quantum.
+ */
+export function rotateKeyCall(
+  validator: Address,
+  verifier: Address,
+  keyPtr: Address,
+  proof: Hex,
+): { to: Address; value: bigint; data: Hex } {
+  if (!isAddress(verifier) || !isAddress(keyPtr)) throw new Error('rotateKey: verifier and keyPtr must be addresses');
+  return {
+    to: validator,
+    value: 0n,
+    data: encodeFunctionData({ abi: quantumValidatorAbi, functionName: 'rotateKey', args: [verifier, keyPtr, proof] }),
+  };
+}
+
+/**
+ * The call that proposes a guardian recovery of `account` (`QuantumValidator.proposeRecovery`);
+ * anyone may send it. `guardianSignatures[i]` is guardian `i`'s signature over `recoveryDigest`
+ * (`'0x'` abstains) and `newKeyProof` is the proposed key's signature over `rotationDigest`, both
+ * at the same nonce. The key can be installed with `executeRecovery` after the guardians' delay.
+ */
+export function proposeRecoveryCall(
+  validator: Address,
+  p: { account: Address; verifier: Address; keyPtr: Address; guardianSignatures: readonly Hex[]; newKeyProof: Hex },
+): { to: Address; value: bigint; data: Hex } {
+  if (!isAddress(p.account) || !isAddress(p.verifier) || !isAddress(p.keyPtr)) {
+    throw new Error('proposeRecovery: account, verifier and keyPtr must be addresses');
+  }
+  return {
+    to: validator,
+    value: 0n,
+    data: encodeFunctionData({
+      abi: quantumValidatorAbi,
+      functionName: 'proposeRecovery',
+      args: [p.account, p.verifier, p.keyPtr, [...p.guardianSignatures], p.newKeyProof],
     }),
   };
 }

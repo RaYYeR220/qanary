@@ -5,6 +5,7 @@ import {IERC7913SignatureVerifier} from "@openzeppelin/contracts/interfaces/IERC
 
 /// @title MockVerifier
 /// @notice Test-only ERC-7913 verifier. A signature is valid iff it equals `abi.encode(key, hash)`.
+///         It describes itself as an ML-DSA-44 verifier (`schemes() == [2]`), like the real ones.
 contract MockVerifier is IERC7913SignatureVerifier {
     /// @notice `verify` was called for a key registered through `revertOn`.
     error MockVerifierRevert();
@@ -25,5 +26,12 @@ contract MockVerifier is IERC7913SignatureVerifier {
     function verify(bytes calldata key, bytes32 hash, bytes calldata signature) external view returns (bytes4) {
         if (reverts[keccak256(key)]) revert MockVerifierRevert();
         return keccak256(signature) == keccak256(abi.encode(key, hash)) ? bytes4(0x024ad318) : bytes4(0xffffffff);
+    }
+
+    /// @notice The scheme ids this verifier claims to accept (`IQanaryPQVerifier.schemes`).
+    /// @return s `[2]` (ML-DSA-44).
+    function schemes() external pure returns (uint8[] memory s) {
+        s = new uint8[](1);
+        s[0] = 2;
     }
 }

@@ -583,6 +583,16 @@ export const hotTierExecutorAbi = [
         "name": "eoa",
         "type": "address",
         "indexed": false
+      },
+      {
+        "name": "pubX",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "pubY",
+        "type": "bytes32",
+        "indexed": false
       }
     ],
     "anonymous": false
