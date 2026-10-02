@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {CanaryTargets} from "../canary/CanaryTargets.sol";
+
 /// @title IQuantumCanaryRegistry
 /// @notice Public quantum-threat signal: bounties on a ladder of small elliptic-curve discrete-log
 ///         challenges plus the production curves. Claims raise the ladder level or mark a classical
@@ -23,5 +25,7 @@ interface IQuantumCanaryRegistry {
     function fund(uint8 target, uint256 amount) external;
     function fundETH(uint8 target) external payable;
     function bounty(uint8 target) external view returns (uint256 tokenAmount, uint256 ethAmount);
+    /// @notice The guarded public keys (affine points for L1–L3 and R1, the address for K1).
+    function targets() external view returns (CanaryTargets.Targets memory);
     function isDrill() external view returns (bool);
 }
