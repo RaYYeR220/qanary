@@ -8,7 +8,7 @@
 // - Falcon (from falcon.js) exports falcon512 and falcon512padded (plus *1024 variants).
 //   falcon512 produces round-3 COMPRESSED (variable-length) signatures; falcon512padded
 //   produces the fixed-length round-3 PADDED format (666 bytes for Falcon-512), which is
-//   what this task's CLI contract specifies ("falcon512 (round-3, padded 666-byte
+//   what the CLI contract specifies ("falcon512 (round-3, padded 666-byte
 //   format)") -- so the CLI scheme name "falcon512" is wired to noble's falcon512padded
 //   export.
 // - Falcon's keygen(seed) requires a 48-byte seed (lengths.seed === 48), not 32.
@@ -17,7 +17,7 @@
 //   falcon512padded.keygen(). SHAKE256 expansion is itself deterministic, so
 //   keygen/sign output stays fully reproducible from the original seedHex. Falcon's
 //   sign() is also hedged by default, so extraEntropy:false is passed there too.
-// - Lengths observed at the installed version match this task's expected byte counts:
+// - Lengths observed at the installed version match the expected byte counts:
 //   ml_dsa44 publicKey=1312B signature=2420B; ml_dsa65 publicKey=1952B;
 //   falcon512padded publicKey=897B signature=666B.
 import { ml_dsa44, ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';

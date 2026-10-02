@@ -9,7 +9,7 @@ use qanary_pq::{falcon512_verify, falcon_r3, fndsa512_verify, fndsa512_verify_ct
 pub struct Kat {
     pub msg: Vec<u8>,
     pub pk: Vec<u8>,
-    /// falcon.c compressed format: 0x29 || nonce || comp(s2)
+    /// detached compressed format: 0x39 || nonce || comp(s2)
     pub sig: Vec<u8>,
 }
 
@@ -31,8 +31,8 @@ pub fn load_kats() -> Vec<Kat> {
                 assert_eq!(&sm[42..42 + mlen], &msg[..]);
                 let esig = &sm[42 + mlen..];
                 assert_eq!(esig.len(), sig_len);
-                assert_eq!(esig[0], 0x29);
-                let mut sig = vec![0x29];
+                assert_eq!(esig[0], 0x29); // inner header of the attached KAT blob
+                let mut sig = vec![0x39];
                 sig.extend_from_slice(nonce);
                 sig.extend_from_slice(&esig[1..]);
                 out.push(Kat { msg: msg.clone(), pk: pk.clone(), sig });
@@ -54,7 +54,6 @@ fn falcon512_nist_round3_kat_100() {
         // padded format (0x39, 666 bytes) of the same signature must also verify
         if k.sig.len() <= 666 {
             let mut p = k.sig.clone();
-            p[0] = 0x39;
             p.resize(666, 0);
             assert_eq!(falcon_r3::verify(&k.pk, &k.msg, &p), Ok(true), "KAT {i} padded");
         }
@@ -99,7 +98,7 @@ fn falcon512_malformed_never_panic() {
         let len = (rng.next() % 900) as usize;
         let mut sig = rng.bytes(len);
         if !sig.is_empty() {
-            sig[0] = if rng.next() & 1 == 0 { 0x29 } else { 0x39 };
+            sig[0] = if rng.next() & 1 == 0 { 0x29 } else { 0x39 }; // 0x29 must be rejected
         }
         let r = no_panic(|| falcon_r3::verify(&k.pk, &k.msg, &sig));
         assert_eq!(r, Ok(false));
@@ -108,6 +107,27 @@ fn falcon512_malformed_never_panic() {
         let r = no_panic(|| falcon_r3::verify(&pk, &k.msg, &k.sig));
         assert!(r != Ok(true));
     }
+}
+
+#[test]
+fn falcon512_noble_compressed_fixture_verifies() {
+    let (pk, msg, sig) = common::fixture("falcon512_compressed");
+    assert_eq!(sig[0], 0x39);
+    assert!(sig.len() < 666, "variable-length compressed signature");
+    assert_eq!(falcon512_verify(&pk, &msg, &sig), Ok(true));
+    let mut padded = sig.clone();
+    padded.resize(666, 0);
+    assert_eq!(falcon512_verify(&pk, &msg, &padded), Ok(true));
+    // non-zero padding, legacy 0x29 header, and a stray trailing byte are rejected
+    let mut bad = padded.clone();
+    bad[665] = 1;
+    assert_eq!(falcon512_verify(&pk, &msg, &bad), Ok(false));
+    let mut legacy = sig.clone();
+    legacy[0] = 0x29;
+    assert_eq!(falcon512_verify(&pk, &msg, &legacy), Ok(false));
+    let mut longer = sig.clone();
+    longer.push(0);
+    assert_eq!(falcon512_verify(&pk, &msg, &longer), Ok(false));
 }
 
 #[test]

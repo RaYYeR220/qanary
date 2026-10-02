@@ -24,7 +24,7 @@ fn run_acvp_sigver(path: std::path::PathBuf, verify: CtxVerify) {
         processed += 1;
         if expected { pass += 1 } else { fail += 1 }
     }
-    assert_eq!(processed, tests.len());
+    assert_eq!((processed, pass, fail), (15, 3, 12), "{}", path.display());
     println!("ACVP {}: total={processed} expected-pass={pass} expected-fail={fail}", path.display());
 }
 
