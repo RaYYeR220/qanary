@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { EngravedFigure } from '@/components/plate/EngravedFigure';
+import { EngravedPlate } from '@/components/plate/EngravedPlate';
 import { PlateFrame } from '@/components/plate/PlateFrame';
 import styles from './page.module.css';
 
@@ -15,7 +15,7 @@ export default function AppSoon() {
       <figure className={styles.figure}>
         <PlateFrame>
           <div className={styles.fig}>
-            <EngravedFigure name="key" label="An iron key whose bit is cut on a lattice." />
+            <EngravedPlate lazy name="fig-key" label="An iron key whose bit is cut on a lattice." />
           </div>
         </PlateFrame>
         <figcaption className={styles.caption}>The cold key, waiting to be cut.</figcaption>

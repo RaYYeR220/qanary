@@ -75,12 +75,20 @@ function rampLUT(ramp: string[]): Uint8ClampedArray {
   return lut;
 }
 
-function canvas(w: number, h: number): HTMLCanvasElement {
+/** A canvas the plate is printed onto: on- or off-screen, in a page or a worker. */
+export type Surface = HTMLCanvasElement | OffscreenCanvas;
+type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
+function canvas(w: number, h: number): Surface {
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(Math.max(1, w), Math.max(1, h));
   const c = document.createElement('canvas');
   c.width = Math.max(1, w);
   c.height = Math.max(1, h);
   return c;
 }
+
+const ctx2d = (c: Surface, opts?: CanvasRenderingContext2DSettings): Ctx2D =>
+  (c as HTMLCanvasElement).getContext('2d', opts) as Ctx2D;
 
 /** Foxing spots: a fixed list, so later states keep the earlier stains. */
 function foxSpots(W: number, H: number): [number, number, number][] {
@@ -93,7 +101,7 @@ function foxSpots(W: number, H: number): [number, number, number][] {
   return out;
 }
 
-export function print(target: HTMLCanvasElement, art: PlateArt, ops: Op[], o: PrintOptions): void {
+export function print(target: Surface, art: PlateArt, ops: Op[], o: PrintOptions): void {
   const level = Math.max(0, Math.min(5, Math.round(o.level)));
   const ink = o.ink ?? DEFAULT_INK;
   const LUT = rampLUT(ink.ramp);
@@ -104,7 +112,7 @@ export function print(target: HTMLCanvasElement, art: PlateArt, ops: Op[], o: Pr
 
   // 1. the cut: white ribbons on transparent
   const cov = canvas(W, H);
-  const g = cov.getContext('2d')!;
+  const g = ctx2d(cov);
   const [ox, oy] = art.origin ?? [0, 0];
   g.setTransform(k, 0, 0, k, -ox * k, -oy * k);
 
@@ -159,17 +167,17 @@ export function print(target: HTMLCanvasElement, art: PlateArt, ops: Op[], o: Pr
   }
 
   // 2. density field at low resolution: halve until small (a box blur for free)
-  let src: HTMLCanvasElement = cov;
+  let src: Surface = cov;
   while (src.width > 260) {
     const half = canvas(Math.ceil(src.width / 2), Math.ceil(src.height / 2));
-    const hg = half.getContext('2d')!;
+    const hg = ctx2d(half);
     hg.imageSmoothingEnabled = true;
     hg.imageSmoothingQuality = 'high';
     hg.drawImage(src, 0, 0, half.width, half.height);
     src = half;
   }
   const lw = src.width, lh = src.height;
-  const sg = src.getContext('2d', { willReadFrequently: true })!;
+  const sg = ctx2d(src, { willReadFrequently: true });
   const img = sg.getImageData(0, 0, lw, lh);
   const px = img.data;
   const stain = new ImageData(lw, lh);
@@ -214,7 +222,7 @@ export function print(target: HTMLCanvasElement, art: PlateArt, ops: Op[], o: Pr
   sg.putImageData(img, 0, 0);
 
   // 3. impression: colour field masked by the cut, over the stains
-  const out = target.getContext('2d')!;
+  const out = ctx2d(target);
   if (target.width !== W || target.height !== H) {
     target.width = W;
     target.height = H;
@@ -225,11 +233,11 @@ export function print(target: HTMLCanvasElement, art: PlateArt, ops: Op[], o: Pr
   out.imageSmoothingQuality = 'high';
   if (spots.length) {
     const st = canvas(lw, lh);
-    st.getContext('2d')!.putImageData(stain, 0, 0);
+    ctx2d(st).putImageData(stain, 0, 0);
     out.drawImage(st, 0, 0, W, H);
   }
   const inked = canvas(W, H);
-  const ig = inked.getContext('2d')!;
+  const ig = ctx2d(inked);
   ig.imageSmoothingEnabled = true;
   ig.imageSmoothingQuality = 'high';
   ig.drawImage(src, 0, 0, W, H);

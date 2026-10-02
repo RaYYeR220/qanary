@@ -1,5 +1,5 @@
 import { rungEnds } from '@/engraving/figures';
-import { EngravedFigure } from '../plate/EngravedFigure';
+import { EngravedPlate } from '../plate/EngravedPlate';
 import { PlateFrame } from '../plate/PlateFrame';
 import book from './book.module.css';
 import { PlateSection } from './PlateSection';
@@ -21,15 +21,15 @@ export function Mechanism() {
         <PlateFrame>
           <div className={styles.figs}>
             <div className={styles.fig}>
-              <EngravedFigure name="key" label="Figure 1: an iron key whose bit is cut on a lattice." />
+              <EngravedPlate lazy name="fig-key" label="Figure 1: an iron key whose bit is cut on a lattice." />
               <span className={styles.figNo}>Fig. 1</span>
             </div>
             <div className={styles.fig}>
-              <EngravedFigure name="bucket" label="Figure 2: a wooden bucket leaking drops from a hole near its foot." />
+              <EngravedPlate lazy name="fig-bucket" label="Figure 2: a wooden bucket leaking drops from a hole near its foot." />
               <span className={styles.figNo}>Fig. 2</span>
             </div>
             <div className={styles.fig}>
-              <EngravedFigure name="ladder" label="Figure 3: a ladder of five rungs; the lowest rung is snapped in two." />
+              <EngravedPlate lazy name="fig-ladder" label="Figure 3: a ladder of five rungs; the lowest rung is snapped in two." />
               <span className={styles.labels} aria-hidden="true">
                 {RUNG_LABELS.map((l, i) => {
                   const [, right] = rungEnds(i);

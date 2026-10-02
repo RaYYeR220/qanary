@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { RUNGS } from '@/content/facts';
 import { Cta } from '../chrome/Cta';
-import { plateXII } from '@/engraving/plate-xii';
 import { EngravedPlate } from '../plate/EngravedPlate';
 import { PlateFrame } from '../plate/PlateFrame';
 import { DegradingHeadline } from './DegradingHeadline';
@@ -20,7 +19,7 @@ export function Hero() {
     <section className={styles.hero} aria-labelledby="claim">
       <figure className={styles.figure}>
         <PlateFrame>
-          <EngravedPlate art={plateXII} level={level} label={PLATE_LABEL} />
+          <EngravedPlate name="plate-xii" level={level} label={PLATE_LABEL} />
           <span className={styles.state}>{rung.plate}</span>
         </PlateFrame>
         <figcaption className={styles.caption}>

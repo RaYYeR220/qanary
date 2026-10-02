@@ -10,6 +10,7 @@ export const redaction = localFont({
     { path: '../fonts/redaction/redaction-italic.woff2', weight: '400', style: 'italic' },
   ],
   fallback: ['Iowan Old Style', 'Georgia', 'serif'],
+  adjustFontFallback: 'Times New Roman',
 });
 
 // Literata (The Literata Project Authors, SIL OFL 1.1): text face, with
@@ -22,6 +23,7 @@ export const literata = localFont({
     { path: '../fonts/literata/literata-italic.woff2', weight: '400 600', style: 'italic' },
   ],
   fallback: ['Iowan Old Style', 'Georgia', 'serif'],
+  adjustFontFallback: 'Times New Roman',
 });
 
 export const redaction10 = localFont({ src: '../fonts/redaction/redaction-10-headline.woff2', variable: '--font-r10', preload: false, display: 'block', fallback: ['Georgia'] });

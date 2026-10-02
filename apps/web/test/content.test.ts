@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { GAS, RUNGS, VALIDATION_BUDGET } from '@/content/facts';
+import { ARTS } from '@/engraving/arts';
 import { FALCON_Q, GAUZE_BASIS, GAUZE_H } from '@/engraving/lattice';
+import { SIZES } from '@/engraving/sizes';
 
 describe('printed figures', () => {
   it('states each speed-up as the measured ratio, rounded', () => {
@@ -34,5 +36,13 @@ describe('gauze lattice', () => {
       expect((((y - GAUZE_H * x) % FALCON_Q) + FALCON_Q) % FALCON_Q).toBe(0);
     }
     expect(Math.abs(b1[0] * b2[1] - b1[1] * b2[0])).toBe(FALCON_Q);
+  });
+});
+
+describe('plate sizes', () => {
+  it('reserves exactly the proportions each engraving prints at', () => {
+    for (const [name, art] of Object.entries(ARTS)) {
+      expect(SIZES[name as keyof typeof ARTS]).toEqual({ width: art.width, height: art.height });
+    }
   });
 });

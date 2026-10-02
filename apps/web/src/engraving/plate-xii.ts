@@ -190,7 +190,7 @@ function glowAt(x: number, y: number, f: FlameState): number {
   let g = 0.55 * Math.exp(-(d * d) / (2 * 46 * 46));
   if (f.fill) {
     const top = GAUZE.y1 - (GAUZE.y1 - GAUZE.y0 - 30) * f.fill;
-    g = Math.max(g, 0.62 * smoothstep(top - 40, top + 80, y) * (0.75 + 0.25 * valueNoise(x / 30, y / 40, 9)));
+    g = Math.max(g, 0.7 * smoothstep(top - 40, top + 80, y) * (0.75 + 0.25 * valueNoise(x / 30, y / 40, 9)));
   }
   return g;
 }
@@ -383,7 +383,8 @@ function flameBright(x: number, y: number, f: FlameState): number {
   }
   if (f.fill) {
     const top = GAUZE.y1 - (GAUZE.y1 - GAUZE.y0 - 30) * f.fill;
-    b = Math.max(b, 0.55 * smoothstep(top, top + 120, y) * (0.6 + 0.4 * Math.cos(((x - AX) / GAUZE.r) * 1.3)));
+    // the fired gauze stays lit: its wires glow instead of standing dark against the flame
+    b = Math.max(b, 0.26 * smoothstep(top, top + 120, y));
   }
   return b;
 }

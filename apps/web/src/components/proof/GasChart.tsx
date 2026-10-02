@@ -46,6 +46,7 @@ export function GasChart() {
                     data-series="stylus"
                     style={{ width: pct(row.stylus) }}
                     tabIndex={0}
+                    role="img"
                     aria-label={`${row.scheme} on Stylus: ${fmt(row.stylus)} gas`}
                   >
                     <span className={styles.tip} role="tooltip">
@@ -60,6 +61,7 @@ export function GasChart() {
                     data-series="solidity"
                     style={{ width: pct(best.gas) }}
                     tabIndex={0}
+                    role="img"
                     aria-label={`${row.scheme} in Solidity: ${fmt(best.gas)} gas, ${best.source}`}
                   >
                     <span className={styles.tip} role="tooltip">

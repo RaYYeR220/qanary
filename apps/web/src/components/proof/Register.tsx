@@ -49,7 +49,7 @@ export function Register({ records }: { records: NetworkRecord[] }) {
       </table>
 
       <div className={styles.txs}>
-        <h4 className={styles.txHead}>Transactions</h4>
+        <h3 className={styles.txHead}>Transactions</h3>
         {txs.length ? (
           <ul className={styles.txList}>
             {txs.map((t) => (
