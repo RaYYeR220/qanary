@@ -1,0 +1,118 @@
+/*
+ * Qanary design tokens. The only place colour, type, space and frame values
+ * are defined; components read these variables and nothing else.
+ *
+ * Palette: a duotone. Bistre is the ground and the paper-tone; canary is the
+ * ink the plates are printed in. Rust appears only as foxing and as the
+ * comparison series in charts.
+ */
+:root {
+  /* bistre, dark to light */
+  --bistre-950: #211207;
+  --bistre-900: #352519;
+  --bistre-800: #4d3c2f;
+  --bistre-700: #665448;
+  --bistre-600: #7f6e62;
+  --bistre-500: #98897e;
+  --bistre-300: #cdc2ba;
+  --bistre-100: #f2ebe7;
+  --plate: #2a1b10;
+
+  /* canary, dark to light */
+  --canary-700: #6f5c1c;
+  --canary-500: #ae8f1d;
+  --canary-400: #d9b816;
+  --canary: #e9b300;
+  --canary-200: #ffd754;
+  --canary-100: #ffecb3;
+
+  --rust: #9a5436;
+
+  /* semantic roles */
+  --ground: var(--bistre-950);
+  --surface: var(--plate);
+  --ink: var(--bistre-300);
+  --ink-strong: var(--canary-100);
+  --ink-muted: var(--bistre-500);
+  --ink-faint: var(--bistre-600);
+  --rule: var(--bistre-800);
+  --rule-strong: var(--bistre-700);
+  --accent: var(--canary);
+  --accent-strong: var(--canary-200);
+  --on-accent: var(--bistre-950);
+  --focus: var(--canary-200);
+
+  /* the engravings' gradient map, sparse line work to dense, and foxing */
+  --engrave-0: #4a3a22;
+  --engrave-1: #6f5c1c;
+  --engrave-2: #a2851c;
+  --engrave-3: #d3a70a;
+  --engrave-4: var(--canary);
+  --engrave-5: var(--canary-200);
+  --engrave-6: #fff0c4;
+  --foxing: #703a1a;
+
+  /* chart series (validated for the bistre ground) */
+  --series-stylus: #ba8d00;
+  --series-solidity: #9a5436;
+
+  /* type families (set by next/font in the root layout). The italics are
+     separate families so that only the roman cuts are preloaded; anything set
+     in italic names its italic family. */
+  --face-display: var(--font-redaction), 'Iowan Old Style', Georgia, serif;
+  --face-display-italic: var(--font-redaction-italic), 'Iowan Old Style', Georgia, serif;
+  --face-text: var(--font-literata), 'Iowan Old Style', Georgia, serif;
+  --face-text-italic: var(--font-literata-italic), 'Iowan Old Style', Georgia, serif;
+
+  /* type scale: a book scale, 13 to 112, fluid at the display end */
+  --step--2: 0.8125rem; /* 13 */
+  --step--1: 0.9375rem; /* 15 */
+  --step-0: 1.1875rem; /* 19, running text */
+  --step-1: 1.4375rem; /* 23 */
+  --step-2: 1.75rem; /* 28 */
+  --step-3: clamp(1.875rem, 1.4rem + 1.6vw, 2.5rem); /* 30 to 40 */
+  --step-4: clamp(2.25rem, 1.5rem + 2.6vw, 3.5rem); /* 36 to 56 */
+  --step-5: clamp(2.875rem, 1.4rem + 5vw, 6rem); /* 46 to 96 */
+
+  --lead-tight: 0.98;
+  --lead-display: 1.08;
+  --lead-text: 1.62;
+  --lead-small: 1.45;
+  --measure: 62ch;
+  --measure-narrow: 44ch;
+
+  /* space: x1.5 from 12 */
+  --s-1: 0.375rem; /* 6 */
+  --s0: 0.75rem; /* 12 */
+  --s1: 1.125rem; /* 18 */
+  --s2: 1.6875rem; /* 27 */
+  --s3: 2.5rem; /* 40 */
+  --s4: 3.75rem; /* 60 */
+  --s5: 5.625rem; /* 90 */
+  --s6: 8.4375rem; /* 135 */
+  --gutter: clamp(1rem, 0.4rem + 2.6vw, 3.75rem);
+
+  /* frames: no rounding anywhere; plates carry a bevelled plate-mark,
+     lit from the upper right like the engravings */
+  --radius: 0;
+  --bevel-top: #3b2a1c;
+  --bevel-right: #45321f;
+  --bevel-bottom: #170c04;
+  --bevel-left: #1b0f06;
+  --plate-glint: color-mix(in srgb, var(--canary) 7%, transparent);
+  --plate-shade: rgb(0 0 0 / 0.32);
+  --hairline: 1px;
+  --rail: 6rem;
+  --margin-col: 13.5rem;
+
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --t-fast: 160ms;
+  --t-state: 520ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 0ms;
+    --t-state: 0ms;
+  }
+}

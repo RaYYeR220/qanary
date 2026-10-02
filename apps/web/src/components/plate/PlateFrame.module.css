@@ -1,0 +1,16 @@
+.mark {
+  padding: clamp(6px, 0.9vw, 12px);
+  background: var(--ground);
+  box-shadow: 0 0 0 var(--hairline) var(--rule);
+}
+
+.bevel {
+  position: relative;
+  background: var(--surface);
+  /* the pressed bevel: lit from the upper right like the plates themselves */
+  border: 3px solid;
+  border-color: var(--bevel-top) var(--bevel-right) var(--bevel-bottom) var(--bevel-left);
+  box-shadow:
+    inset 0 0 0 1px var(--plate-glint),
+    inset 0 0 3.5rem var(--plate-shade);
+}

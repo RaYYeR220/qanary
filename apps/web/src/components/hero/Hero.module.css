@@ -1,0 +1,168 @@
+/* Phones: claim and action, then the plate with its ladder, then the lede. */
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    'claim'
+    'actions'
+    'figure'
+    'control'
+    'lede';
+  row-gap: var(--s1);
+  padding: var(--s1) var(--gutter) var(--s4);
+}
+
+.claim {
+  grid-area: claim;
+  container-type: inline-size;
+}
+
+.lede {
+  grid-area: lede;
+  max-width: 38ch;
+  margin-top: var(--s1);
+  font-size: 1.0625rem;
+  line-height: 1.55;
+}
+
+.actions {
+  grid-area: actions;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  padding-block: 4px;
+}
+
+.secondary {
+  font-size: var(--step--1);
+  color: var(--ink);
+}
+
+/* scheme names never split at their hyphen */
+.nb {
+  white-space: nowrap;
+}
+
+.figure {
+  grid-area: figure;
+  margin-top: var(--s-1);
+}
+
+/* compact on a phone: the plate is sized so the ladder under it stays in the first screen */
+.plateBox {
+  width: clamp(12rem, calc((100svh - 28.75rem) * 0.746), 100%);
+  margin-inline: auto;
+}
+
+.caption {
+  margin-top: var(--s-1);
+  padding-inline: var(--s0);
+  font-size: var(--step--2);
+  line-height: var(--lead-small);
+  font-family: var(--face-text-italic);
+  font-style: italic;
+  text-align: center;
+  text-wrap: balance;
+  color: var(--ink-muted);
+}
+
+/* a name set roman inside an italic caption, as the plate books did */
+.binomial {
+  font-family: var(--face-text);
+  font-style: normal;
+}
+
+/* the state of the impression, lettered in the plate's empty upper corner */
+.state {
+  position: absolute;
+  right: 4.5%;
+  top: 2.2%;
+  font-size: var(--step--2);
+  font-family: var(--face-text-italic);
+  font-style: italic;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.control {
+  grid-area: control;
+}
+
+@media (max-width: 39.99em) {
+  /* the masthead already links to the workings on a phone */
+  .secondary {
+    display: none;
+  }
+}
+
+@media (min-width: 40em) {
+  .hero {
+    row-gap: var(--s2);
+    padding-top: var(--s3);
+  }
+
+  .lede {
+    font-size: var(--step-0);
+    line-height: var(--lead-text);
+  }
+
+  .plateBox {
+    width: min(100%, 34rem);
+  }
+
+  .caption {
+    font-size: var(--step--1);
+  }
+}
+
+/* Wide screens: the plate on the left, the words and the ladder on the right */
+@media (min-width: 64em) {
+  .hero {
+    grid-template-columns: minmax(0, 1.04fr) minmax(0, 0.96fr);
+    grid-template-rows: auto auto auto auto;
+    grid-template-areas:
+      'figure claim'
+      'figure lede'
+      'figure actions'
+      'figure control';
+    align-content: center;
+    column-gap: clamp(2.5rem, 5vw, 6.5rem);
+    row-gap: 0;
+    min-height: 100svh;
+    padding: var(--s2) var(--gutter);
+  }
+
+  .figure {
+    grid-row: 1 / -1;
+    align-self: center;
+    justify-self: center;
+    margin-top: 0;
+    /* the plate is 880:1180; keep plate, frame and caption inside one screen */
+    width: min(100%, calc((100svh - 8.5rem) * 0.746 + 1.9rem));
+  }
+
+  .plateBox {
+    width: 100%;
+  }
+
+  .claim,
+  .actions,
+  .control {
+    max-width: 36rem;
+  }
+
+  .lede {
+    margin-top: var(--s2);
+  }
+
+  .actions {
+    margin-top: var(--s3);
+  }
+
+  .control {
+    margin-top: var(--s4);
+    padding-top: var(--s2);
+    border-top: var(--hairline) solid var(--rule);
+  }
+}

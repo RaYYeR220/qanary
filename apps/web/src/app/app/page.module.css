@@ -1,0 +1,50 @@
+.page {
+  display: grid;
+  gap: var(--s3);
+  padding: var(--s3) var(--gutter) var(--s5);
+  align-items: center;
+  min-height: calc(100svh - 4rem);
+}
+
+.figure {
+  width: min(100%, 22rem);
+  justify-self: center;
+}
+
+.fig {
+  padding: var(--s2);
+}
+
+.caption {
+  margin-top: var(--s0);
+  text-align: center;
+  font-family: var(--face-text-italic);
+  font-style: italic;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.title {
+  font-size: var(--step-5);
+  line-height: var(--lead-tight);
+  max-width: 12ch;
+}
+
+.text {
+  margin-top: var(--s2);
+  max-width: 42ch;
+}
+
+.links {
+  margin-top: var(--s2);
+  font-size: var(--step--1);
+}
+
+@media (min-width: 64em) {
+  .page {
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    column-gap: var(--s5);
+    min-height: 100svh;
+    padding-block: var(--s2);
+  }
+}

@@ -1,0 +1,34 @@
+.headline {
+  display: grid;
+  /* three lines, sized so the longest ("Your treasury,") fills the column */
+  font-size: min(6.25rem, 15cqi);
+  line-height: var(--lead-tight);
+  letter-spacing: -0.012em;
+  color: var(--ink-strong);
+}
+
+.layer {
+  grid-area: 1 / 1;
+  opacity: 0;
+  transition: opacity var(--t-state) var(--ease);
+}
+
+.layer[data-on='true'] {
+  opacity: 1;
+}
+
+.line {
+  display: block;
+  white-space: nowrap;
+}
+
+/* on a phone the second and third lines share one, at a size that fits it */
+@container (max-width: 30rem) {
+  .headline {
+    font-size: 13.4cqi;
+  }
+
+  .turn {
+    display: none;
+  }
+}

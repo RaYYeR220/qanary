@@ -1,0 +1,6 @@
+.next/
+next-env.d.ts
+*.tsbuildinfo
+# written by next dev when agentRules is not disabled
+AGENTS.md
+CLAUDE.md

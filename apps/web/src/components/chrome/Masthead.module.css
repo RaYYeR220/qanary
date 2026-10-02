@@ -1,0 +1,98 @@
+/* Narrow screens: a quiet top bar */
+.masthead {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s1);
+  padding: var(--s0) var(--gutter);
+  border-bottom: var(--hairline) solid var(--rule);
+  background: var(--ground);
+}
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--ink-strong);
+  text-decoration: none;
+}
+
+.monogram {
+  width: 32px;
+  height: 32px;
+  color: var(--accent);
+}
+
+.word {
+  font-family: var(--face-display);
+  font-size: 1.375rem;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
+.nav ul {
+  display: flex;
+  gap: var(--s1);
+  list-style: none;
+}
+
+.nav a {
+  font-size: var(--step--1);
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.nav a:hover {
+  color: var(--ink-strong);
+}
+
+/* Wide screens: the wordmark rail down the right edge, fixed */
+@media (min-width: 64em) {
+  .masthead {
+    position: fixed;
+    inset: 0 0 0 auto;
+    width: var(--rail);
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: space-between;
+    padding: var(--s2) 0 0;
+    border-bottom: 0;
+    border-left: var(--hairline) solid var(--rule);
+  }
+
+  .mark {
+    flex-direction: column;
+    gap: var(--s1);
+  }
+
+  .monogram {
+    width: 40px;
+    height: 40px;
+  }
+
+  .word {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    font-size: 1.5rem;
+    letter-spacing: 0.02em;
+  }
+
+  .nav ul {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .nav li {
+    border-top: var(--hairline) solid var(--rule);
+  }
+
+  .nav a {
+    display: block;
+    padding: var(--s1) var(--s-1);
+    text-align: center;
+    font-size: 0.875rem;
+    line-height: 1.25;
+  }
+}
