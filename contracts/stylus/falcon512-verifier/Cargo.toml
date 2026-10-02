@@ -1,0 +1,29 @@
+[package]
+name = "falcon512-verifier"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Stylus ERC-7913 verifier: Falcon-512 (round 3) and FN-DSA-512"
+
+[lib]
+# underscores: hyphenated lib names break cargo-stylus (stylus-sdk-rs #439)
+name = "falcon512_verifier"
+crate-type = ["lib", "cdylib"]
+
+[features]
+default = ["mini-alloc"]
+mini-alloc = ["stylus-sdk/mini-alloc"]
+export-abi = ["stylus-sdk/export-abi"]
+debug = ["stylus-sdk/debug"]
+contract-client-gen = []
+
+[dependencies]
+stylus-sdk = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
+qanary-pq = { workspace = true, features = ["falcon512", "fndsa512"] }
+
+[dev-dependencies]
+stylus-test = "=0.10.9"
+stylus-sdk = { workspace = true, features = ["stylus-test"] }
+hex = "0.4"
