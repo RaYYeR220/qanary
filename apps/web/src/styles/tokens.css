@@ -56,9 +56,13 @@
   --series-stylus: #ba8d00;
   --series-solidity: #9a5436;
 
-  /* type families (set by next/font in the root layout) */
+  /* type families (set by next/font in the root layout). The italics are
+     separate families so that only the roman cuts are preloaded; anything set
+     in italic names its italic family. */
   --face-display: var(--font-redaction), 'Iowan Old Style', Georgia, serif;
+  --face-display-italic: var(--font-redaction-italic), 'Iowan Old Style', Georgia, serif;
   --face-text: var(--font-literata), 'Iowan Old Style', Georgia, serif;
+  --face-text-italic: var(--font-literata-italic), 'Iowan Old Style', Georgia, serif;
 
   /* type scale: a book scale, 13 to 112, fluid at the display end */
   --step--2: 0.8125rem; /* 13 */

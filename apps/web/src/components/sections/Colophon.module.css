@@ -36,6 +36,7 @@
 
 .notesTitle {
   font-size: var(--step-1);
+  font-family: var(--face-display-italic);
   font-style: italic;
   color: var(--ink);
 }
@@ -64,6 +65,7 @@
   padding-top: var(--s0);
   border-top: var(--hairline) solid var(--rule);
   font-size: var(--step--2);
+  font-family: var(--face-text-italic);
   font-style: italic;
   color: var(--ink-muted);
   max-width: var(--measure);

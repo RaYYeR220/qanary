@@ -86,6 +86,7 @@ p {
 
 em,
 i {
+  font-family: var(--face-text-italic);
   font-style: italic;
 }
 

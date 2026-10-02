@@ -1,0 +1,11 @@
+.side {
+  align-self: start;
+}
+
+.side p {
+  max-width: 34ch;
+}
+
+.side em {
+  color: var(--ink);
+}

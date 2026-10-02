@@ -35,9 +35,6 @@ importers:
       '@fontsource/redaction-35':
         specifier: 5.3.0
         version: 5.3.0
-      '@fontsource/redaction-50':
-        specifier: 5.3.0
-        version: 5.3.0
       '@fontsource/redaction-70':
         specifier: 5.3.0
         version: 5.3.0
@@ -489,9 +486,6 @@ packages:
 
   '@fontsource/redaction-35@5.3.0':
     resolution: {integrity: sha512-c4n4fgTbYoiyODKvasBWjj1EzV9G+X2oYDgr1PPShIO3rzM50CYvlJ+VCpgBmNyw9l8D/6T1PUmn8ZGgzOlV3g==}
-
-  '@fontsource/redaction-50@5.3.0':
-    resolution: {integrity: sha512-gB62yw+lqqRW21fZA/i+O4icjaXlKfdmrwzrJoyZzMJ5PJknBAdUBcKdF+Vhyw9T9vSoU7/hf5J12tjOvnT0+Q==}
 
   '@fontsource/redaction-70@5.3.0':
     resolution: {integrity: sha512-K8jG7NWaOIF+d4kySQBkq+FeMxIoOxwotmK3adBDd6/MTrbPcGijxI46Y5zjjDWmfY/8Rcs2YJlz6XhYjyJylQ==}
@@ -1920,8 +1914,6 @@ snapshots:
   '@fontsource/redaction-20@5.3.0': {}
 
   '@fontsource/redaction-35@5.3.0': {}
-
-  '@fontsource/redaction-50@5.3.0': {}
 
   '@fontsource/redaction-70@5.3.0': {}
 

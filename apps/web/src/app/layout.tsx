@@ -8,7 +8,7 @@ import styles from './layout.module.css';
 export const metadata: Metadata = {
   title: { default: 'Qanary: quantum-safe treasury accounts for Arbitrum', template: '%s · Qanary' },
   description:
-    'Quantum-safe treasury accounts for Arbitrum: NIST post-quantum signatures verified on-chain by Stylus, a capped classical hot key for daily operations, and a trustless Q-Day tripwire that shuts classical keys down automatically.',
+    'Quantum-safe treasury accounts for Arbitrum: NIST post-quantum signatures verified by Arbitrum Stylus programs live on ApeChain, a capped classical hot key for daily operations, and a trustless Q-Day tripwire that shuts classical keys down automatically.',
 };
 
 export const viewport: Viewport = {

@@ -2,6 +2,7 @@ import { rungEnds } from '@/engraving/figures';
 import { EngravedPlate } from '../plate/EngravedPlate';
 import { PlateFrame } from '../plate/PlateFrame';
 import book from './book.module.css';
+import { Note } from './Note';
 import { PlateSection } from './PlateSection';
 import styles from './Mechanism.module.css';
 
@@ -57,8 +58,9 @@ export function Mechanism() {
       <aside className={`${book.margin} ${styles.side}`} aria-label="Why Stylus">
         <p>
           <em>Why Stylus.</em> Arbitrum has no post-quantum precompile planned, and EIP-8051 and EIP-8052 are drafts.
-          Stylus runs the verifiers as WASM now, each under 18 KB compressed and inside the 500,000-gas ERC-4337
-          validation budget.
+          Stylus runs the verifiers as WASM, each under 18 KB compressed and inside the 500,000-gas ERC-4337
+          validation budget. They are live on ApeChain. New Stylus activations on Arbitrum One are paused for now
+          <Note n={8} />, so accounts there use a Solidity verifier until they resume.
         </p>
       </aside>
 

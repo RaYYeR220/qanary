@@ -23,8 +23,8 @@ export default function AppSoon() {
       <div className={styles.copy}>
         <h1 className={styles.title}>The treasury app opens soon.</h1>
         <p className={styles.text}>
-          Opening a treasury starts with a post-quantum key, derived in your browser from a recovery phrase or kept in
-          an AWS KMS HSM. The hot key, its cap and the tripwire response come next.
+          A Qanary treasury answers to a post-quantum root key, derived in your browser from a recovery phrase or kept
+          in an AWS KMS HSM.
         </p>
         <p className={styles.links}>
           <Link href="/#how">Read how the two keys and the tripwire work</Link>

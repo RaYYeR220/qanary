@@ -11,19 +11,20 @@ export function Exposure() {
     <PlateSection id="exposure" plate="XIII" title="The public keys are already on-chain.">
       <div className={`${book.main} ${book.text}`}>
         <p className={book.lead}>
-          An account shows its public key the first time it signs. A quantum computer that can break secp256k1 could
-          work back from that key to the private key, and spend what the account holds.
+          An Ethereum account reveals its public key in its first signed transaction.
+          <Note n={1} /> A quantum computer that can break secp256k1 could work back from that key to the private key,
+          and spend what the account holds.
         </p>
       </div>
 
       <div className={`${book.main} ${styles.figures}`}>
         <p className={styles.figure}>
           More than 65% of ether sits in accounts whose public keys are exposed.
-          <Note n={1} />
+          <Note n={2} />
         </p>
         <p className={styles.figure}>
           About 6.9 million bitcoin is held at exposed addresses.
-          <Note n={2} />
+          <Note n={3} />
         </p>
       </div>
 

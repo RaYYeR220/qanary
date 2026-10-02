@@ -82,6 +82,7 @@
 
 .when {
   display: block;
+  font-family: var(--face-text-italic);
   font-style: italic;
   color: var(--ink-muted);
 }

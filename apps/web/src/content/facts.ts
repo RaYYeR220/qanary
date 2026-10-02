@@ -1,7 +1,20 @@
 // Every number and claim the site prints lives here, so it can be checked in
 // one place.
 
-export const MEASURED = 'Execution gas, measured on Arbitrum Nitro (ArbOS 61), cached program.';
+/** Basis of the head-to-head comparison with Solidity. */
+export const MEASURED = 'execution gas for a cached program, measured on an Arbitrum Nitro node (ArbOS 61)';
+/** Basis of the live figures, read from the ApeChain deployment record. */
+export const LIVE_BASIS =
+  'gas per verification call live on ApeChain, calldata included and uncached, since ApeChain has no cache manager';
+
+/** Stylus on Arbitrum One: new activations paused by the Security Council. */
+export const ARBITRUM_ONE_PAUSE = {
+  date: '2 October 2026',
+  tx: 'https://arbiscan.io/tx/0x9eb3a4be3ba777f9fc82250eddc10f8356731cc97c09a70801d30ce33322c652',
+  forum: 'https://forum.arbitrum.foundation/t/security-council-emergency-action-2-10-2026/31530',
+  /** The Solidity ML-DSA-44 verifier the account modules use there meanwhile. */
+  fallback: 'a Solidity ML-DSA-44 verifier (Fireblocks core, about 1.24M gas per verification)',
+};
 
 export interface GasRow {
   scheme: 'Falcon-512' | 'ML-DSA-44' | 'ML-DSA-65';
@@ -114,31 +127,38 @@ export interface Dated {
 export const TODAY = { year: 2026, at: 0.75, label: 'October 2026' };
 
 export const CHRONOLOGY: Dated[] = [
-  { when: 'June 2026', year: 2026, at: 0.42, who: 'United States', what: 'Executive Order 14412 sets post-quantum signatures by 2031.', note: 6 },
-  { when: 'July 2026', year: 2026, at: 0.5, who: 'Singapore, CSA', what: 'The Quantum-Safe Handbook names ML-DSA and sets the dates below.', note: 3 },
-  { when: 'July 2026', year: 2026, at: 0.55, who: 'Singapore, MAS', what: 'Calls for quantum resilience before the end of this decade.', note: 4 },
-  { when: '31 March 2027', year: 2027, at: 0.25, who: 'Singapore, CSA', what: 'Migration plans due.', note: 3 },
-  { when: '1 January 2028', year: 2028, at: 0, who: 'Singapore, CSA', what: 'New systems quantum-safe from this date.', note: 3 },
-  { when: 'End of 2029', year: 2029, at: 0.99, who: 'Singapore, MAS', what: 'The end of the decade named for quantum resilience.', note: 4 },
-  { when: '2031', year: 2031, at: 0.5, who: 'United States', what: 'Post-quantum signatures, under EO 14412.', note: 6 },
-  { when: 'After 2035', year: 2035, at: 0.99, who: 'NIST IR 8547, draft', what: 'ECDSA disallowed.', note: 5 },
+  { when: 'June 2026', year: 2026, at: 0.42, who: 'United States', what: 'Executive Order 14412 sets post-quantum signatures by 2031.', note: 4 },
+  { when: 'July 2026', year: 2026, at: 0.5, who: 'Singapore, CSA', what: 'The Quantum-Safe Handbook names ML-DSA and sets the dates below.', note: 5 },
+  { when: 'July 2026', year: 2026, at: 0.55, who: 'Singapore, MAS', what: 'Calls for “quantum resilience before the end of this decade.”', note: 6 },
+  { when: '31 March 2027', year: 2027, at: 0.25, who: 'Singapore, CSA', what: 'Migration plans due.', note: 5 },
+  { when: '1 January 2028', year: 2028, at: 0, who: 'Singapore, CSA', what: 'New systems quantum-safe from this date.', note: 5 },
+  { when: '2031', year: 2031, at: 0.5, who: 'United States', what: 'Post-quantum signatures, under EO 14412.', note: 4 },
+  { when: 'After 2035', year: 2035, at: 0.99, who: 'NIST IR 8547, draft', what: 'ECDSA disallowed.', note: 7 },
 ];
 
-export const SOURCES: { n: number; text: string }[] = [
-  { n: 1, text: 'Deloitte; Project Eleven. Share of ETH held in accounts with exposed public keys.' },
-  { n: 2, text: 'Project Eleven, May 2026. Bitcoin held at addresses with exposed public keys.' },
-  { n: 3, text: 'Cyber Security Agency of Singapore, Quantum-Safe Handbook, July 2026.' },
-  { n: 4, text: 'Monetary Authority of Singapore, July 2026.' },
-  { n: 5, text: 'NIST IR 8547, Transition to Post-Quantum Cryptography Standards (initial public draft).' },
-  { n: 6, text: 'United States Executive Order 14412, June 2026.' },
-  { n: 7, text: 'Solidity comparisons: ZKNox experimental verifiers; Fireblocks ML-DSA-44 verifier, September 2026.' },
+/** Notes, numbered in the order the page first cites them. */
+export const SOURCES: { n: number; text: string; href?: string }[] = [
+  { n: 1, text: 'Ethereum Yellow Paper, Appendix F: a transaction’s signature lets anyone recover the sender’s public key.' },
+  { n: 2, text: 'Deloitte; Project Eleven. Share of ETH held in accounts with exposed public keys.' },
+  { n: 3, text: 'Project Eleven, May 2026. Bitcoin held at addresses with exposed public keys.' },
+  { n: 4, text: 'United States Executive Order 14412, June 2026.' },
+  { n: 5, text: 'Cyber Security Agency of Singapore, Quantum-Safe Handbook, July 2026.' },
+  { n: 6, text: 'Monetary Authority of Singapore, July 2026.' },
+  { n: 7, text: 'NIST IR 8547, Transition to Post-Quantum Cryptography Standards (initial public draft).' },
+  {
+    n: 8,
+    text: 'Arbitrum Security Council, emergency action of 2 October 2026 pausing new Stylus activations on Arbitrum One and Nova.',
+    href: 'https://forum.arbitrum.foundation/t/security-council-emergency-action-2-10-2026/31530',
+  },
+  { n: 9, text: 'Solidity comparisons: ZKNox experimental verifiers; Fireblocks ML-DSA-44 verifier, September 2026.' },
 ];
 
 export const PARTNERS: { mark: string; detail: string; role: string }[] = [
-  { mark: 'Arbitrum Stylus', detail: 'WASM verifiers', role: 'Runs the three verifiers on-chain, each under 18 KB compressed.' },
+  { mark: 'Arbitrum Stylus', detail: 'WASM verifiers', role: 'Runs the three verifiers, each under 18 KB compressed.' },
+  { mark: 'ApeChain', detail: 'Arbitrum Orbit chain', role: 'Hosts the live Stylus verifiers and settles to Arbitrum One.' },
   { mark: 'ZeroDev Kernel', detail: 'v3.3', role: 'Qanary installs as an ERC-7579 validator and executor.' },
   { mark: 'Safe', detail: '1.3 and 1.4.1', role: 'Post-quantum ERC-1271 owners, such as a 9-of-12 council of post-quantum keys.' },
   { mark: 'OpenZeppelin', detail: 'Accounts, ERC-7913', role: 'Uses the verifiers directly as ERC-7913 signers.' },
   { mark: 'AWS KMS', detail: 'ML-DSA-44', role: 'Keeps the cold key in an HSM and signs with ML_DSA_SHAKE_256.' },
-  { mark: 'Paxos USDG', detail: 'Stablecoin', role: 'A dollar asset the treasury can hold and spend.' },
+  { mark: 'Paxos USDG', detail: 'Stablecoin', role: 'Bounties and caps can be denominated in USDG.' },
 ];

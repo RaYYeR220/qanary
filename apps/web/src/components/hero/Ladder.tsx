@@ -42,7 +42,7 @@ export function Ladder({ level, onChange }: Props) {
           value={level}
           onChange={(e) => onChange(Number(e.currentTarget.value))}
           aria-valuetext={`${rung.event} ${rung.response}`}
-          aria-describedby="rungs-status"
+          aria-describedby="rungs-note"
         />
       </div>
       <div className={styles.ticks} aria-hidden="true">
@@ -62,10 +62,13 @@ export function Ladder({ level, onChange }: Props) {
           </button>
         ))}
       </div>
-      <p id="rungs-status" className={styles.status} aria-live="polite">
+      {/* not a live region: the slider already announces these words through aria-valuetext */}
+      <p className={styles.status}>
         <em>{rung.event}</em> {rung.response}
       </p>
-      <p className={styles.note}>Default responses. Each account chooses its own.</p>
+      <p id="rungs-note" className={styles.note}>
+        Default responses. Each account chooses its own.
+      </p>
     </div>
   );
 }

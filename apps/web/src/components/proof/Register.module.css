@@ -1,5 +1,5 @@
 .register {
-  max-width: 52rem;
+  max-width: 60rem;
 }
 
 .table {
@@ -22,6 +22,7 @@
   padding: 0 1rem 0.5rem 0;
   border-bottom: var(--hairline) solid var(--rule-strong);
   font-weight: 400;
+  font-family: var(--face-text-italic);
   font-style: italic;
   text-align: left;
   color: var(--ink-muted);
@@ -47,21 +48,46 @@
 .detail {
   display: block;
   font-size: var(--step--2);
+  font-family: var(--face-text-italic);
   font-style: italic;
   color: var(--ink-muted);
 }
 
 .addr {
+  display: block;
   color: var(--accent);
   text-decoration-color: var(--canary-700);
+  font-variant-numeric: tabular-nums;
 }
 
 .pending {
+  font-family: var(--face-text-italic);
   font-style: italic;
   color: var(--ink-muted);
 }
 
+a.pending {
+  text-decoration-color: var(--rule-strong);
+}
+
+/* deployment and activation links under each address */
 .txs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.9rem;
+  font-size: var(--step--2);
+}
+
+/* small text, full-size targets */
+.txs a {
+  display: inline-block;
+  min-height: 24px;
+  min-width: 24px;
+  line-height: 24px;
+  color: var(--ink-muted);
+}
+
+.e2e {
   margin-top: var(--s2);
 }
 
@@ -80,6 +106,7 @@
 
 .txList li {
   display: flex;
+  align-items: baseline;
   flex-wrap: wrap;
   gap: 0.25rem 1rem;
   padding-block: 0.4rem;
@@ -92,6 +119,7 @@
 }
 
 .txNet {
+  font-family: var(--face-text-italic);
   font-style: italic;
   color: var(--ink-muted);
   min-width: 9rem;
@@ -100,6 +128,7 @@
 .empty {
   margin-top: var(--s-1);
   font-size: var(--step--1);
+  font-family: var(--face-text-italic);
   font-style: italic;
   color: var(--ink-muted);
   max-width: 48ch;

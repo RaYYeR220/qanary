@@ -12,7 +12,7 @@ export function Colophon() {
           Set the tripwire before the first rung breaks.
         </h2>
         <p className={styles.text}>
-          Start with a post-quantum key in your browser, or keep it in AWS KMS. The hot key and its cap come after.
+          The root key is post-quantum: derived in your browser from a recovery phrase, or kept in an AWS KMS HSM.
         </p>
         <Cta href="/app">Open a treasury</Cta>
       </section>
@@ -25,6 +25,15 @@ export function Colophon() {
           {SOURCES.map((s) => (
             <li key={s.n} id={`note-${s.n}`}>
               {s.text}
+              {s.href && (
+                <>
+                  {' '}
+                  <a href={s.href} target="_blank" rel="noreferrer">
+                    Read the notice
+                  </a>
+                  .
+                </>
+              )}
             </li>
           ))}
         </ol>
@@ -32,7 +41,9 @@ export function Colophon() {
 
       <p className={styles.colophon}>
         Plates engraved in code. Set in Redaction, by MCKL, and Literata, both under the SIL Open Font License. Falcon
-        is round-3 Falcon-512; ML-DSA follows FIPS 204.
+        is round-3 Falcon-512; ML-DSA follows FIPS 204. Signatures are verified by Arbitrum Stylus programs live on
+        ApeChain; on Arbitrum One, where new Stylus activations are paused, accounts use a Solidity verifier behind the
+        same interface.
       </p>
     </footer>
   );
