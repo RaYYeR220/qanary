@@ -15,6 +15,15 @@ test group for its parameter set, with the original `tcId`, `pk`, `message`,
 
 Verified through `mldsa44_verify_ctx` / `mldsa65_verify_ctx` with each vector's own context; every result must equal `testPassed`.
 
+## `mldsa/prepared-44.json`
+
+Reference expansions of 17 ML-DSA-44 public keys: `mldsa44.pk`, `mldsa44_devsign.pk`, and the 15
+keys of `mldsa/sigver-44.json` in `tcId` order. For each key the file records `keccak256(pk)` and
+the `keccak256` of the 20,545-byte blob (`0x00 || tr || NTT(2^13 t1) || ExpandA(rho)`) that
+`prepare/prepare.py` from `fireblocks-labs/evm-ml-dsa-verifier` (commit `cca262b`) outputs for it.
+`contracts/evm/test/fallback` checks that the on-chain `SolidityMLDSA44Verifier.prepareKey`
+deploys exactly these blobs.
+
 ## `falcon-r3/falcon512-KAT.rsp`
 
 The NIST PQC round-3 Falcon-512 known-answer test vectors (`falcon512-KAT.rsp`
