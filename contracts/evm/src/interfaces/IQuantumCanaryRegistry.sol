@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {CanaryTargets} from "../canary/CanaryTargets.sol";
+
 /// @title IQuantumCanaryRegistry
 /// @notice Public quantum-threat signal: bounties on a ladder of small elliptic-curve discrete-log
 ///         challenges plus the production curves. Claims raise the ladder level or mark a classical
@@ -23,5 +25,23 @@ interface IQuantumCanaryRegistry {
     function fund(uint8 target, uint256 amount) external;
     function fundETH(uint8 target) external payable;
     function bounty(uint8 target) external view returns (uint256 tokenAmount, uint256 ethAmount);
+    /// @notice The guarded public keys (affine points for L1–L3 and R1, the address for K1).
+    function targets() external view returns (CanaryTargets.Targets memory);
     function isDrill() external view returns (bool);
+
+    // Payouts never gate a claim: a bounty push that fails is credited to the claimant and pulled later.
+    /// @notice A claim's token and/or ETH payout could not be pushed and was credited to `claimant`.
+    event PayoutDeferred(address indexed claimant, uint256 tokenAmount, uint256 ethAmount);
+    /// @notice `claimant` pulled its deferred payouts.
+    event OwedWithdrawn(address indexed claimant, uint256 tokenAmount, uint256 ethAmount);
+    /// @notice `withdrawOwed` with nothing credited.
+    error NothingOwed();
+    /// @notice The caller rejected (or reverted on) its deferred ETH; the credit is kept.
+    error EthWithdrawFailed();
+    /// @notice Bounty tokens credited to `claimant` after a failed push.
+    function owedToken(address claimant) external view returns (uint256);
+    /// @notice ETH credited to `claimant` after a failed push.
+    function owedEth(address claimant) external view returns (uint256);
+    /// @notice Pays the caller everything credited to it; reverts (keeping the credit) if either transfer fails.
+    function withdrawOwed() external;
 }

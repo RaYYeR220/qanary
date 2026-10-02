@@ -1,0 +1,30 @@
+[package]
+name = "qanary-pq"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "no_std verification of NIST post-quantum signatures (ML-DSA, Falcon, FN-DSA) for Arbitrum Stylus"
+
+[lib]
+name = "qanary_pq"
+
+[features]
+default = ["mldsa44", "mldsa65", "falcon512", "fndsa512"]
+mldsa44 = ["dep:fips204", "fips204?/ml-dsa-44"]
+mldsa65 = ["dep:fips204", "fips204?/ml-dsa-65"]
+falcon512 = ["dep:fn-dsa-comm"]
+fndsa512 = ["dep:fn-dsa-vrfy"]
+
+[dependencies]
+fips204 = { workspace = true, optional = true }
+fn-dsa-comm = { workspace = true, optional = true }
+fn-dsa-vrfy = { workspace = true, optional = true }
+
+[dev-dependencies]
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+proptest = "1"
+fn-dsa = "=0.4.0"
+ml-dsa = "=0.1.1"
+rand_core = { version = "0.6", features = ["getrandom"] }
