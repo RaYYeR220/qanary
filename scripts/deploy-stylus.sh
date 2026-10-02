@@ -21,6 +21,11 @@
 #                            ArbWasm.activateProgram and the deployer is skipped by default.
 #   DOCKER_RPC=<url>         RPC URL as seen from inside the cargo-stylus container (default: <rpc-url> with
 #                            127.0.0.1/localhost replaced by host.docker.internal)
+#   DEPLOY_VIA=cast          send the deploy and activation transactions with cast instead of cargo-stylus, for
+#                            nodes whose eth_call cannot simulate activation with the unbounded balance override
+#                            that `cargo stylus check/deploy` uses (ApeChain Curtis answers "method handler
+#                            crashed"). Build, initcode and verification are unchanged; activation is simulated
+#                            here with a bounded override instead.
 #
 # Steps: cargo stylus check (size + activation data fee) -> estimate deploy and activation gas for every
 # contract -> abort if balance < 1.2 x estimated total -> cargo stylus deploy (CREATE + activateProgram) ->
@@ -149,6 +154,7 @@ import json, sys, urllib.request
 rpc, sender, path = sys.argv[1:]
 ARBWASM = "0x0000000000000000000000000000000000000071"
 PROBE = "0x00000000000000000000000000000000000c0de1"
+PROBE_SENDER = "0x00000000000000000000000000000000000c0de2"  # funded by a bounded override (some nodes crash on 2^256-1)
 def call(method, params, may_fail=False):
     req = urllib.request.Request(rpc, headers={"Content-Type": "application/json", "User-Agent": "curl/8"},
         data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode())
@@ -162,21 +168,22 @@ initcode = open(path).read().strip()
 initcode = initcode if initcode.startswith("0x") else "0x" + initcode
 deploy_gas = int(call("eth_estimateGas", [{"from": sender, "data": initcode}, "latest"]), 16)
 runtime = call("eth_call", [{"from": sender, "data": initcode}, "latest"])
-override = {PROBE: {"code": runtime}}
+override = {PROBE: {"code": runtime}, PROBE_SENDER: {"balance": hex(10**24)}}
 arg = PROBE[2:].rjust(64, "0")
 # programVersion(address) succeeds iff this code hash is already active (activation is per code hash)
 if call("eth_call", [{"to": ARBWASM, "data": "0xcc8f4e88" + arg}, "latest", override], may_fail=True):
     print(deploy_gas, 0, 0, (len(runtime) - 2) // 2)
     sys.exit(0)
 activate = "0x58c780c2" + arg  # activateProgram(address)
-sim = call("eth_call", [{"from": sender, "to": ARBWASM, "data": activate, "value": hex(10**18)}, "latest", override])
+sim = call("eth_call", [{"from": PROBE_SENDER, "to": ARBWASM, "data": activate, "value": hex(10**18)}, "latest", override])
 data_fee = int(sim[2 + 64:2 + 128], 16)
-act_gas = int(call("eth_estimateGas", [{"from": sender, "to": ARBWASM, "data": activate,
+act_gas = int(call("eth_estimateGas", [{"from": PROBE_SENDER, "to": ARBWASM, "data": activate,
                                          "value": hex(data_fee * 12 // 10)}, "latest", override]), 16)
 print(deploy_gas, act_gas, data_fee, (len(runtime) - 2) // 2)
 PY
 }
 
+declare -A EST_DEPLOY EST_ACT
 TOTAL=0
 for c in "${CONTRACTS[@]}"; do
   [[ -d "$ROOT/contracts/stylus/$c" ]] || die "unknown contract $c"
@@ -186,17 +193,20 @@ for c in "${CONTRACTS[@]}"; do
     log "$c: already active at $addr, skipping estimate"
     continue
   fi
-  log "$c: cargo stylus check"
-  set +e
-  stylus "$c" check --endpoint "$DOCKER_RPC" 2>&1 | strip_ansi >"$WORK/$c.check.log"
-  rc=${PIPESTATUS[0]}
-  set -e
-  grep -E "contract size|data fee|rror" "$WORK/$c.check.log" || true
-  (( rc == 0 )) || die "$c: check failed, see $WORK/$c.check.log"
+  if [[ "${DEPLOY_VIA:-}" != cast ]]; then
+    log "$c: cargo stylus check"
+    set +e
+    stylus "$c" check --endpoint "$DOCKER_RPC" 2>&1 | strip_ansi >"$WORK/$c.check.log"
+    rc=${PIPESTATUS[0]}
+    set -e
+    grep -E "contract size|data fee|rror" "$WORK/$c.check.log" || true
+    (( rc == 0 )) || die "$c: check failed, see $WORK/$c.check.log (try DEPLOY_VIA=cast if the node crashes on the simulation)"
+  fi
   stylus "$c" get-initcode --output "/work/target-linux/deploy/$NETWORK/$c.initcode" >/dev/null 2>&1 \
     || die "$c: get-initcode failed"
   read -r dg ag fee size < <(estimate "$WORK/$c.initcode") || true
   [[ -n "${size:-}" ]] || die "$c: gas estimation failed"
+  EST_DEPLOY[$c]=$dg; EST_ACT[$c]=$ag
   cost=$(big "($dg + $ag) * $GAS_PRICE + $fee * 12 // 10")
   TOTAL=$(big "$TOTAL + $cost")
   log "$c: $size bytes, deploy gas $dg, activation gas $ag, data fee $fee wei -> ~$(cast from-wei $cost)"
@@ -286,6 +296,55 @@ smoke() {
 }
 
 # ---- deploy + activate -----------------------------------------------------------------------------
+# cast_send <gas-limit> <cast send args...>: sends at the current gas price + 5% (Arbitrum charges the base fee
+# only); prints "<status> <txHash> <contractAddress|->"
+cast_send() {
+  local gl="$1"; shift
+  cast send -r "$RPC" --private-key "$DEPLOYER_PRIVATE_KEY" --gas-limit "$gl" \
+    --gas-price "$(big "$(cast gas-price -r "$RPC") * 105 // 100")" --priority-gas-price 0 --json "$@" \
+    | py -c 'import json, sys; r = json.load(sys.stdin); print(int(r["status"], 16), r["transactionHash"], r.get("contractAddress") or "-")'
+}
+activation_fee() { # activation_fee <address>: data fee (wei) to activate the code at <address>
+  py - "$RPC" "$1" <<'PY'
+import json, sys, urllib.request
+rpc, addr = sys.argv[1:]
+sender = "0x00000000000000000000000000000000000c0de2"
+req = urllib.request.Request(rpc, headers={"Content-Type": "application/json", "User-Agent": "curl/8"},
+    data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "eth_call", "params": [
+        {"from": sender, "to": "0x0000000000000000000000000000000000000071", "value": hex(10**18),
+         "data": "0x58c780c2" + addr[2:].lower().rjust(64, "0")}, "latest", {sender: {"balance": hex(10**24)}}]}).encode())
+r = json.loads(urllib.request.urlopen(req, timeout=120).read())
+if "error" in r:
+    sys.exit(f"activation simulation: {r['error']}")
+print(int(r["result"][2 + 64:2 + 128], 16))
+PY
+}
+activate_via_cast() { # activate_via_cast <contract> <address>: sets act_tx
+  local c="$1" a="$2" fee value gl status
+  fee="$(activation_fee "$a")" || die "$c: activation simulation failed"
+  value="$(big "$fee * 12 // 10")"   # ArbWasm refunds whatever exceeds the data fee
+  gl="${EST_ACT[$c]:-$(cast estimate -r "$RPC" --from "$DEPLOYER" $ARBWASM 'activateProgram(address)' "$a" --value "$value")}"
+  read -r status act_tx _ < <(cast_send "$(big "$gl * 12 // 10")" $ARBWASM 'activateProgram(address)' "$a" --value "$value")
+  [[ "$status" == 1 ]] || die "$c: activation tx failed (${act_tx:-not sent}); deployed at $a, re-run to retry"
+  log "$c: activated, tx $act_tx"
+}
+deploy_via_cast() { # deploy_via_cast <contract> <contractKey>: sets addr deploy_tx act_tx
+  local c="$1" k="$2" initcode status
+  initcode="$(tr -d ' \r\n' <"$WORK/$c.initcode")"
+  [[ "$initcode" == 0x* ]] || initcode="0x$initcode"
+  if command -v cygpath >/dev/null && (( ${#initcode} > 32400 )); then
+    die "$c: initcode (${#initcode} hex chars) exceeds the Windows command-line limit for cast; run DEPLOY_VIA=cast from Linux, macOS or WSL"
+  fi
+  read -r status deploy_tx addr < <(cast_send "$(big "${EST_DEPLOY[$c]} * 11 // 10")" --create "$initcode")
+  [[ "$status" == 1 && "$addr" != - ]] || die "$c: deploy tx failed (${deploy_tx:-not sent})"
+  addr="$(cast to-check-sum-address "$addr")"
+  record "$k" "address=$addr" "deployTx=$deploy_tx"
+  log "$c: deployed at $addr, tx $deploy_tx"
+  if [[ "$(cast call -r "$RPC" $ARBWASM 'programVersion(address)(uint16)' "$addr" 2>/dev/null || echo 0)" != 0 ]]; then
+    log "$c: code hash already active"; act_tx=""; return
+  fi
+  activate_via_cast "$c" "$addr"
+}
 # cargo-stylus prints: successfully activated contract 0x<addr> with tx "<hash>"
 parse_act_tx() {
   { grep -oE 'activated contract 0x[0-9a-fA-F]{40} with tx "?(0x)?[0-9a-fA-F]{64}' "$1" || true; } \
@@ -304,9 +363,16 @@ for c in "${CONTRACTS[@]}"; do
     before="$(cast balance -r "$RPC" "$DEPLOYER")"
     if [[ -n "$addr" && "$(cast code -r "$RPC" "$addr" | head -c 8)" == 0xeff000 ]]; then
       log "$c: deployed at $addr but not active, activating"
-      stylus "$c" activate --address "$addr" --endpoint "$DOCKER_RPC" --private-key-path /secrets/key 2>&1 \
-        | strip_ansi | tee "$WORK/$c.activate.log"
-      act_tx="$(parse_act_tx "$WORK/$c.activate.log")"
+      if [[ "${DEPLOY_VIA:-}" == cast ]]; then
+        activate_via_cast "$c" "$addr"
+      else
+        stylus "$c" activate --address "$addr" --endpoint "$DOCKER_RPC" --private-key-path /secrets/key 2>&1 \
+          | strip_ansi | tee "$WORK/$c.activate.log"
+        act_tx="$(parse_act_tx "$WORK/$c.activate.log")"
+      fi
+    elif [[ "${DEPLOY_VIA:-}" == cast ]]; then
+      log "$c: deploying with cast"
+      deploy_via_cast "$c" "$k"
     else
       log "$c: deploying"
       set +e
