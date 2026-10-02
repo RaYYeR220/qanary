@@ -1,0 +1,29 @@
+[package]
+name = "mldsa44-verifier"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Stylus ERC-7913 verifier: ML-DSA-44 (FIPS 204, pure, empty ctx)"
+
+[lib]
+# underscores: hyphenated lib names break cargo-stylus (stylus-sdk-rs #439)
+name = "mldsa44_verifier"
+crate-type = ["lib", "cdylib"]
+
+[features]
+default = ["mini-alloc"]
+mini-alloc = ["stylus-sdk/mini-alloc"]
+export-abi = ["stylus-sdk/export-abi"]
+debug = ["stylus-sdk/debug"]
+contract-client-gen = []
+
+[dependencies]
+stylus-sdk = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
+qanary-pq = { workspace = true, features = ["mldsa44"] }
+
+[dev-dependencies]
+stylus-test = "=0.10.9"
+stylus-sdk = { workspace = true, features = ["stylus-test"] }
+hex = "0.4"
