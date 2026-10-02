@@ -13,6 +13,7 @@ import {IQuantumCanaryRegistry} from "../src/interfaces/IQuantumCanaryRegistry.s
 import {ILadderVerifier} from "../src/interfaces/ILadderVerifier.sol";
 import {MockLadderVerifier} from "./mocks/MockLadderVerifier.sol";
 import {TestToken} from "./mocks/TestToken.sol";
+import {ControlledToken} from "./mocks/ControlledToken.sol";
 
 /// @dev Claimant contract that re-enters `claim` when its ETH bounty arrives.
 contract ReentrantClaimant {
@@ -44,6 +45,43 @@ contract ReentrantClaimant {
         try registry.claim(innerTarget, innerProof) {}
         catch (bytes memory err) {
             innerError = err;
+        }
+    }
+}
+
+/// @dev Claimant contract that can refuse ETH, and can re-enter `withdrawOwed` when ETH arrives.
+contract ToggleClaimant {
+    error Rejected();
+
+    IQuantumCanaryRegistry public immutable registry;
+    bool public accept;
+    bool public reenter;
+    bytes public innerError;
+
+    constructor(IQuantumCanaryRegistry r) {
+        registry = r;
+    }
+
+    function set(bool accept_, bool reenter_) external {
+        accept = accept_;
+        reenter = reenter_;
+    }
+
+    function claim(uint8 target, bytes calldata proof) external {
+        registry.claim(target, proof);
+    }
+
+    function withdraw() external {
+        registry.withdrawOwed();
+    }
+
+    receive() external payable {
+        if (!accept) revert Rejected();
+        if (reenter) {
+            try registry.withdrawOwed() {}
+            catch (bytes memory err) {
+                innerError = err;
+            }
         }
     }
 }
@@ -149,6 +187,27 @@ contract QuantumCanaryRegistryTest is Test {
         (uint256 tokenLeft, uint256 ethLeft) = reg.bounty(target);
         assertEq(tokenLeft, 0, "token bounty cleared");
         assertEq(ethLeft, 0, "eth bounty cleared");
+        _assertOwed(reg, alice, 0, 0);
+    }
+
+    function _assertOwed(IQuantumCanaryRegistry r, address who, uint256 tokenAmount, uint256 ethAmount) internal view {
+        assertEq(r.owedToken(who), tokenAmount, "owed token");
+        assertEq(r.owedEth(who), ethAmount, "owed eth");
+    }
+
+    /// @dev Registry over a token the issuer can pause/blacklist, with `target` funded by `funder`.
+    function _controlled(uint8 target, uint256 tokenAmount, uint256 ethAmount)
+        internal
+        returns (QuantumCanaryRegistry r, ControlledToken ct)
+    {
+        ct = new ControlledToken();
+        r = new QuantumCanaryRegistry(ladder, ct, CanaryTargets.drill(), true);
+        ct.mint(funder, tokenAmount);
+        vm.startPrank(funder);
+        ct.approve(address(r), tokenAmount);
+        if (tokenAmount != 0) r.fund(target, tokenAmount);
+        if (ethAmount != 0) r.fundETH{value: ethAmount}(target);
+        vm.stopPrank();
     }
 
     function _countLevelRaised(Vm.Log[] memory logs) internal view returns (uint256 n) {
@@ -554,21 +613,198 @@ contract QuantumCanaryRegistryTest is Test {
         assertEq(reg.ladderLevel(), 2);
     }
 
-    function test_reentrantClaim_bubbled_outerRevertsCleanly() public {
+    function test_reentrantClaim_bubbled_signalStands_ethDeferred() public {
         ReentrantClaimant attacker = new ReentrantClaimant(reg);
         _fund(reg, 0);
         attacker.arm(false, 1, _proof(reg, 1, address(attacker)));
         bytes memory proof = _proof(reg, 0, address(attacker));
-        vm.expectRevert(QuantumCanaryRegistry.EthPayoutFailed.selector);
+        vm.expectEmit(address(reg));
+        emit IQuantumCanaryRegistry.PayoutDeferred(address(attacker), 0, ETH_BOUNTY);
         attacker.claim(0, proof);
 
-        assertFalse(reg.claimed(0));
+        assertTrue(reg.claimed(0));
         assertFalse(reg.claimed(1));
-        assertEq(reg.ladderLevel(), 0);
-        (uint256 tok, uint256 eth) = reg.bounty(0);
-        assertEq(tok, TOKEN_BOUNTY);
-        assertEq(eth, ETH_BOUNTY);
+        assertEq(reg.ladderLevel(), 1);
+        assertEq(token.balanceOf(address(attacker)), TOKEN_BOUNTY);
         assertEq(address(attacker).balance, 0);
+        _assertOwed(reg, address(attacker), 0, ETH_BOUNTY);
+
+        // Its receive hook still re-enters `claim`, now inside `withdrawOwed`: the pull fails, the credit stays.
+        vm.prank(address(attacker));
+        vm.expectRevert(IQuantumCanaryRegistry.EthWithdrawFailed.selector);
+        reg.withdrawOwed();
+        _assertOwed(reg, address(attacker), 0, ETH_BOUNTY);
+        assertFalse(reg.claimed(1));
+    }
+
+    function test_withdrawOwed_reentry_paysOnce() public {
+        ToggleClaimant c = new ToggleClaimant(reg);
+        _fund(reg, 4);
+        c.claim(4, _proof(reg, 4, address(c)));
+        _assertOwed(reg, address(c), 0, ETH_BOUNTY);
+
+        c.set(true, true);
+        c.withdraw();
+        assertEq(c.innerError(), abi.encodeWithSelector(ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector));
+        assertEq(address(c).balance, ETH_BOUNTY);
+        assertEq(address(reg).balance, 0);
+        _assertOwed(reg, address(c), 0, 0);
+    }
+
+    // ------------------------------------------------------------------ payout never gates the signal
+
+    function test_claim_tokenPaused_signalStands_tokenDeferred() public {
+        (QuantumCanaryRegistry r, ControlledToken ct) = _controlled(3, TOKEN_BOUNTY, ETH_BOUNTY);
+        ct.setPaused(true);
+        bytes memory proof = _proof(r, 3, alice);
+
+        vm.expectEmit(address(r));
+        emit IQuantumCanaryRegistry.Claimed(3, alice, TOKEN_BOUNTY, ETH_BOUNTY);
+        vm.expectEmit(address(r));
+        emit IQuantumCanaryRegistry.PayoutDeferred(alice, TOKEN_BOUNTY, 0);
+        vm.prank(alice);
+        r.claim(3, proof);
+
+        assertTrue(r.claimed(3));
+        assertEq(r.ladderLevel(), 3);
+        assertTrue(r.familyBroken(0));
+        assertEq(alice.balance, ETH_BOUNTY, "eth still pushed");
+        assertEq(ct.balanceOf(alice), 0);
+        _assertOwed(r, alice, TOKEN_BOUNTY, 0);
+
+        vm.prank(alice);
+        vm.expectRevert(ControlledToken.TokenPaused.selector);
+        r.withdrawOwed();
+        _assertOwed(r, alice, TOKEN_BOUNTY, 0);
+
+        ct.setPaused(false);
+        vm.expectEmit(address(r));
+        emit IQuantumCanaryRegistry.OwedWithdrawn(alice, TOKEN_BOUNTY, 0);
+        vm.prank(alice);
+        r.withdrawOwed();
+        assertEq(ct.balanceOf(alice), TOKEN_BOUNTY);
+        assertEq(ct.balanceOf(address(r)), 0);
+        _assertOwed(r, alice, 0, 0);
+
+        vm.prank(alice);
+        vm.expectRevert(IQuantumCanaryRegistry.NothingOwed.selector);
+        r.withdrawOwed();
+    }
+
+    function test_claim_claimantBlacklisted_signalStands_tokenDeferred() public {
+        (QuantumCanaryRegistry r, ControlledToken ct) = _controlled(4, TOKEN_BOUNTY, 0);
+        ct.setBlocked(alice, true);
+        bytes memory proof = _proof(r, 4, alice);
+        vm.prank(alice);
+        r.claim(4, proof);
+
+        assertTrue(r.claimed(4));
+        assertEq(r.ladderLevel(), 3);
+        assertTrue(r.familyBroken(1));
+        _assertOwed(r, alice, TOKEN_BOUNTY, 0);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ControlledToken.Blacklisted.selector, alice));
+        r.withdrawOwed();
+
+        ct.setBlocked(alice, false);
+        vm.prank(alice);
+        r.withdrawOwed();
+        assertEq(ct.balanceOf(alice), TOKEN_BOUNTY);
+    }
+
+    /// @dev `fund` is permissionless: a 1-unit bounty must not hand the token issuer a veto over the alarm.
+    function test_claim_dustBountyOnFrozenRegistry_signalStands() public {
+        (QuantumCanaryRegistry r, ControlledToken ct) = _controlled(0, 1, 0);
+        ct.setBlocked(address(r), true);
+        bytes memory proof = _proof(r, 0, alice);
+        vm.prank(alice);
+        r.claim(0, proof);
+        assertTrue(r.claimed(0));
+        assertEq(r.ladderLevel(), 1);
+        _assertOwed(r, alice, 1, 0);
+    }
+
+    function test_claim_ethRejected_signalStands_ethDeferred() public {
+        ToggleClaimant c = new ToggleClaimant(reg);
+        _fund(reg, 4);
+        bytes memory proof = _proof(reg, 4, address(c));
+
+        vm.expectEmit(address(reg));
+        emit IQuantumCanaryRegistry.PayoutDeferred(address(c), 0, ETH_BOUNTY);
+        c.claim(4, proof);
+
+        assertTrue(reg.claimed(4));
+        assertTrue(reg.familyBroken(1));
+        assertEq(reg.ladderLevel(), 3);
+        assertEq(token.balanceOf(address(c)), TOKEN_BOUNTY, "token still pushed");
+        assertEq(address(c).balance, 0);
+        _assertOwed(reg, address(c), 0, ETH_BOUNTY);
+
+        vm.expectRevert(IQuantumCanaryRegistry.EthWithdrawFailed.selector);
+        c.withdraw();
+        _assertOwed(reg, address(c), 0, ETH_BOUNTY);
+
+        c.set(true, false);
+        vm.expectEmit(address(reg));
+        emit IQuantumCanaryRegistry.OwedWithdrawn(address(c), 0, ETH_BOUNTY);
+        c.withdraw();
+        assertEq(address(c).balance, ETH_BOUNTY);
+        _assertOwed(reg, address(c), 0, 0);
+    }
+
+    function test_withdrawOwed_nothingOwed_reverts() public {
+        vm.prank(alice);
+        vm.expectRevert(IQuantumCanaryRegistry.NothingOwed.selector);
+        reg.withdrawOwed();
+    }
+
+    // ------------------------------------------------------------------ canonical targets
+
+    function test_constructor_nonDrillRequiresNumsTargets() public {
+        vm.expectRevert(QuantumCanaryRegistry.NonCanonicalTargets.selector);
+        new QuantumCanaryRegistry(ladder, token, CanaryTargets.drill(), false);
+
+        CanaryTargets.Targets memory t = CanaryTargets.nums();
+        t.k1 = address(1);
+        vm.expectRevert(QuantumCanaryRegistry.NonCanonicalTargets.selector);
+        new QuantumCanaryRegistry(ladder, token, t, false);
+
+        t = CanaryTargets.nums();
+        t.r1y = bytes32(uint256(t.r1y) ^ 1);
+        vm.expectRevert(QuantumCanaryRegistry.NonCanonicalTargets.selector);
+        new QuantumCanaryRegistry(ladder, token, t, false);
+
+        // Drill registries may carry any keys; a live one carries exactly the NUMS set.
+        assertTrue(new QuantumCanaryRegistry(ladder, token, t, true).isDrill());
+        assertFalse(new QuantumCanaryRegistry(ladder, token, CanaryTargets.nums(), false).isDrill());
+    }
+
+    // ------------------------------------------------------------------ fee-on-transfer funding
+
+    function test_fund_creditsMeasuredDelta() public {
+        ControlledToken ct = new ControlledToken();
+        QuantumCanaryRegistry r = new QuantumCanaryRegistry(ladder, ct, CanaryTargets.drill(), true);
+        ct.setFeeBps(100); // 1% burned per transfer
+        ct.mint(funder, 1_000e6);
+
+        vm.startPrank(funder);
+        ct.approve(address(r), 1_000e6);
+        vm.expectEmit(address(r));
+        emit IQuantumCanaryRegistry.Funded(2, funder, 990e6, 0);
+        r.fund(2, 1_000e6);
+        vm.stopPrank();
+
+        (uint256 tok,) = r.bounty(2);
+        assertEq(tok, 990e6);
+        assertEq(ct.balanceOf(address(r)), 990e6);
+
+        bytes memory proof = _proof(r, 2, alice);
+        vm.prank(alice);
+        r.claim(2, proof);
+        assertEq(ct.balanceOf(alice), 980.1e6);
+        assertEq(ct.balanceOf(address(r)), 0);
+        _assertOwed(r, alice, 0, 0);
     }
 
     // ------------------------------------------------------------------ drill factory

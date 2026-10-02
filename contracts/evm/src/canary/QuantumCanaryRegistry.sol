@@ -22,12 +22,15 @@ import {CanaryTargets} from "./CanaryTargets.sol";
 ///      chain, this registry, the target and the claimant, so a proof cannot be front-run or replayed.
 ///      Verifiers never see a caller-chosen digest: plain ECDSA over a free digest is forgeable for any
 ///      key (e ≡ 0, r = s = Qx mod n). Claims are deduplicated by target, never by signature bytes.
+///      The signal never depends on a payout: a token push that fails (issuer pause or blacklist, any
+///      token revert) or an ETH push the claimant rejects is credited to `owedToken` / `owedEth` and
+///      pulled later with `withdrawOwed`, so neither a token issuer nor a dust bounty can veto a claim.
 ///      There is no owner, no admin and no way to un-claim or lower the level.
 contract QuantumCanaryRegistry is IQuantumCanaryRegistry, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
-    /// @notice The claimant rejected (or reverted on) the ETH bounty payout.
-    error EthPayoutFailed();
+    /// @notice A non-drill registry must guard exactly the nothing-up-my-sleeve keys `CanaryTargets.nums()`.
+    error NonCanonicalTargets();
 
     struct Bounty {
         uint256 token;
@@ -62,12 +65,19 @@ contract QuantumCanaryRegistry is IQuantumCanaryRegistry, ReentrancyGuardTransie
     uint8 private _claimedBits;
     uint8 private _brokenBits;
     mapping(uint8 target => Bounty) private _bounties;
+    /// @inheritdoc IQuantumCanaryRegistry
+    mapping(address claimant => uint256) public override owedToken;
+    /// @inheritdoc IQuantumCanaryRegistry
+    mapping(address claimant => uint256) public override owedEth;
 
     /// @param ladder_ Ladder verifier for targets 0–2.
     /// @param bountyToken_ Bounty ERC-20, or `address(0)` for ETH-only bounties.
-    /// @param t Guarded keys (`CanaryTargets.nums()` live, `CanaryTargets.drill()` for drills).
+    /// @param t Guarded keys: exactly `CanaryTargets.nums()` unless `drill_` (e.g. `CanaryTargets.drill()`).
     /// @param drill_ Marks a drill registry whose keys are public.
     constructor(ILadderVerifier ladder_, IERC20 bountyToken_, CanaryTargets.Targets memory t, bool drill_) {
+        if (!drill_ && keccak256(abi.encode(t)) != keccak256(abi.encode(CanaryTargets.nums()))) {
+            revert NonCanonicalTargets();
+        }
         ladder = ladder_;
         bountyToken = bountyToken_;
         _drill = drill_;
@@ -85,8 +95,10 @@ contract QuantumCanaryRegistry is IQuantumCanaryRegistry, ReentrancyGuardTransie
     // ------------------------------------------------------------------ claims
 
     /// @inheritdoc IQuantumCanaryRegistry
-    /// @dev `proof` is `abi.encode(r, s)` for targets 0, 1, 2 and 4 and `abi.encode(v, r, s)` for target 3;
-    ///      any other length, a `v` above 255, a high-s K1/R1 signature or a failed check is `InvalidProof`.
+    /// @dev `proof` is `abi.encode(r, s)` for targets 0, 1, 2 and 4 and `abi.encode(v, r, s)` for target 3,
+    ///      where K1 accepts only `v ∈ {27, 28}`; any other length or `v`, a high-s K1/R1 signature or a
+    ///      failed check is `InvalidProof`. State and events are final before any payout; a failed push is
+    ///      credited (see `withdrawOwed`) and reported by `PayoutDeferred`, never reverted.
     function claim(uint8 target, bytes calldata proof) external nonReentrant {
         _requireOpen(target);
         if (!_verify(target, claimMessage(target, msg.sender), proof)) revert InvalidProof();
@@ -113,10 +125,37 @@ contract QuantumCanaryRegistry is IQuantumCanaryRegistry, ReentrancyGuardTransie
             emit FamilyBroken(family);
         }
 
-        if (b.token != 0) bountyToken.safeTransfer(msg.sender, b.token);
+        // Pushes run under `nonReentrant`; the credits below are the only writes after them.
+        uint256 deferredToken = 0;
+        uint256 deferredEth = 0;
+        if (b.token != 0 && !bountyToken.trySafeTransfer(msg.sender, b.token)) {
+            deferredToken = b.token;
+            owedToken[msg.sender] += deferredToken;
+        }
         if (b.eth != 0) {
             (bool ok,) = msg.sender.call{value: b.eth}("");
-            if (!ok) revert EthPayoutFailed();
+            if (!ok) {
+                deferredEth = b.eth;
+                owedEth[msg.sender] += deferredEth;
+            }
+        }
+        // forge-lint: disable-next-line(reentrancy-events)
+        if (deferredToken != 0 || deferredEth != 0) emit PayoutDeferred(msg.sender, deferredToken, deferredEth);
+    }
+
+    /// @inheritdoc IQuantumCanaryRegistry
+    function withdrawOwed() external nonReentrant {
+        uint256 tokenAmount = owedToken[msg.sender];
+        uint256 ethAmount = owedEth[msg.sender];
+        if (tokenAmount == 0 && ethAmount == 0) revert NothingOwed();
+        owedToken[msg.sender] = 0;
+        owedEth[msg.sender] = 0;
+        emit OwedWithdrawn(msg.sender, tokenAmount, ethAmount);
+
+        if (tokenAmount != 0) bountyToken.safeTransfer(msg.sender, tokenAmount);
+        if (ethAmount != 0) {
+            (bool ok,) = msg.sender.call{value: ethAmount}("");
+            if (!ok) revert EthWithdrawFailed();
         }
     }
 
@@ -128,13 +167,18 @@ contract QuantumCanaryRegistry is IQuantumCanaryRegistry, ReentrancyGuardTransie
     // ------------------------------------------------------------------ bounties
 
     /// @inheritdoc IQuantumCanaryRegistry
-    /// @dev Pulls `amount` of the bounty token from `msg.sender` (approval required).
+    /// @dev Pulls `amount` of the bounty token from `msg.sender` (approval required) and credits the
+    ///      registry's measured balance increase, so fee-on-transfer tokens never overstate a bounty.
     function fund(uint8 target, uint256 amount) external nonReentrant {
         if (address(bountyToken) == address(0)) revert TokenBountiesDisabled();
         _requireOpen(target);
-        _bounties[target].token += amount;
-        emit Funded(target, msg.sender, amount, 0);
+        uint256 before = bountyToken.balanceOf(address(this));
         bountyToken.safeTransferFrom(msg.sender, address(this), amount);
+        uint256 received = bountyToken.balanceOf(address(this)) - before;
+        _bounties[target].token += received;
+        // Under `nonReentrant`, the token call above cannot reenter a state-changing path to reorder this log.
+        // forge-lint: disable-next-line(reentrancy-events)
+        emit Funded(target, msg.sender, received, 0);
     }
 
     /// @inheritdoc IQuantumCanaryRegistry
