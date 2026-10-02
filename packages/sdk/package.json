@@ -1,0 +1,47 @@
+{
+  "name": "@qanary/sdk",
+  "version": "0.1.0",
+  "description": "Post-quantum signers, Kernel smart accounts with a post-quantum root key, hot tier, canary and exposure clients for Qanary on Arbitrum",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsx scripts/gen-deployments.ts && tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "gen:abis": "tsx scripts/gen-abis.ts",
+    "gen:deployments": "tsx scripts/gen-deployments.ts",
+    "e2e": "tsx scripts/e2e.ts",
+    "status": "tsx scripts/status.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-kms": "^3.1145.0",
+    "@noble/hashes": "2.4.0",
+    "@noble/post-quantum": "0.7.1",
+    "@scure/bip39": "^2.4.0",
+    "@zerodev/sdk": "5.5.10"
+  },
+  "peerDependencies": {
+    "viem": "^2.30.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "viem": "^2.57.2",
+    "vitest": "^5.0.3"
+  }
+}

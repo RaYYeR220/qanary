@@ -1,6 +1,7 @@
 target/
 target-linux/
 node_modules/
+dist/
 contracts/evm/out/
 contracts/evm/cache/
 contracts/evm/out-stylus/
