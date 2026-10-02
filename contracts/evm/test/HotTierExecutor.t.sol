@@ -2,7 +2,12 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {MODULE_TYPE_EXECUTOR, MODULE_TYPE_VALIDATOR} from "@openzeppelin/contracts/interfaces/draft-IERC7579.sol";
+import {
+    IERC7579Module,
+    MODULE_TYPE_EXECUTOR,
+    MODULE_TYPE_VALIDATOR,
+    MODULE_TYPE_FALLBACK
+} from "@openzeppelin/contracts/interfaces/draft-IERC7579.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {WebAuthn} from "@openzeppelin/contracts/utils/cryptography/WebAuthn.sol";
@@ -14,6 +19,9 @@ import {Enum} from "@safe/common/Enum.sol";
 import {ModuleManager} from "@safe/base/ModuleManager.sol";
 import {SafeProxyFactory} from "@safe/proxies/SafeProxyFactory.sol";
 import {HotTierExecutor} from "../src/HotTierExecutor.sol";
+import {QuantumValidator} from "../src/QuantumValidator.sol";
+import {KeyStore} from "../src/KeyStore.sol";
+import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockCanaryRegistry} from "./mocks/MockCanaryRegistry.sol";
 import {TestAccount7579} from "./mocks/TestAccount7579.sol";
 import {RevertingToken} from "./mocks/RevertingToken.sol";
@@ -23,6 +31,46 @@ import {TestToken} from "./mocks/TestToken.sol";
 contract Reenterer {
     function reenter(HotTierExecutor ex, address account) external {
         ex.execute(account, new HotTierExecutor.Call[](0));
+    }
+}
+
+/// @dev Neutral allowlist target.
+contract Pinger {
+    uint256 public last;
+    address public caller;
+
+    function ping(uint256 x) external payable {
+        last = x;
+        caller = msg.sender;
+    }
+}
+
+/// @dev Minimal module of any type; `ping` stands for a function that acts on `msg.sender`.
+contract MockModule is IERC7579Module {
+    uint256 public immutable moduleType;
+
+    constructor(uint256 t) {
+        moduleType = t;
+    }
+
+    function onInstall(bytes calldata) external {}
+    function onUninstall(bytes calldata) external {}
+
+    function isModuleType(uint256 t) external view returns (bool) {
+        return t == moduleType;
+    }
+
+    function ping() external {}
+}
+
+/// @dev ERC-7579 "account" whose module query reverts.
+contract BrokenModuleQueryAccount {
+    function isModuleInstalled(uint256, address, bytes calldata) external pure returns (bool) {
+        revert("no module query");
+    }
+
+    function configure(HotTierExecutor ex, HotTierExecutor.Setup calldata s) external {
+        ex.configure(s);
     }
 }
 
@@ -237,16 +285,35 @@ contract HotTierExecutorTest is Test {
         HotTierExecutor.Setup memory s = _setup();
         s.signer = HotTierExecutor.HotSigner(HotTierExecutor.Family.P256, hot, bytes32(0), bytes32(uint256(1)));
         _expectInvalid(s);
+        s.signer = HotTierExecutor.HotSigner(HotTierExecutor.Family.P256, hot, bytes32(uint256(1)), 0);
+        _expectInvalid(s);
         // P256 does not need an EOA
-        s.signer = HotTierExecutor.HotSigner(HotTierExecutor.Family.P256, address(0), bytes32(uint256(1)), 0);
+        s.signer = HotTierExecutor.HotSigner(
+            HotTierExecutor.Family.P256, address(0), bytes32(uint256(1)), bytes32(uint256(2))
+        );
+        vm.expectEmit(address(ex));
+        emit HotTierExecutor.HotSignerSet(
+            makeAddr("fresh"), HotTierExecutor.Family.P256, address(0), bytes32(uint256(1)), bytes32(uint256(2))
+        );
         vm.prank(makeAddr("fresh"));
         ex.configure(s);
     }
 
-    function test_configure_emitsEventsAndStoresState() public {
+    function test_configure_rejectsApprovalClassAllowEntry() public {
+        bytes4[5] memory sels = [bytes4(0x095ea7b3), 0x39509351, 0xa22cb465, 0x87517c45, 0xd505accf];
         HotTierExecutor.Setup memory s = _setup();
         s.allow = new HotTierExecutor.AllowEntry[](1);
-        s.allow[0] = HotTierExecutor.AllowEntry(address(usdc), IERC20.approve.selector);
+        for (uint256 i = 0; i < sels.length; i++) {
+            s.allow[0] = HotTierExecutor.AllowEntry(address(usdc), sels[i]);
+            _expectInvalid(s);
+        }
+    }
+
+    function test_configure_emitsEventsAndStoresState() public {
+        Pinger p = new Pinger();
+        HotTierExecutor.Setup memory s = _setup();
+        s.allow = new HotTierExecutor.AllowEntry[](1);
+        s.allow[0] = HotTierExecutor.AllowEntry(address(p), Pinger.ping.selector);
         address a = makeAddr("fresh");
 
         vm.expectEmit(address(ex));
@@ -254,9 +321,9 @@ contract HotTierExecutorTest is Test {
         vm.expectEmit(address(ex));
         emit HotTierExecutor.CapSet(a, ETH, ETH_CAP);
         vm.expectEmit(address(ex));
-        emit HotTierExecutor.AllowSet(a, address(usdc), IERC20.approve.selector, true);
+        emit HotTierExecutor.AllowSet(a, address(p), Pinger.ping.selector, true);
         vm.expectEmit(address(ex));
-        emit HotTierExecutor.HotSignerSet(a, HotTierExecutor.Family.SECP256K1, hot);
+        emit HotTierExecutor.HotSignerSet(a, HotTierExecutor.Family.SECP256K1, hot, 0, 0);
         vm.expectEmit(address(ex));
         emit HotTierExecutor.Configured(a, HotTierExecutor.AccountKind.ERC7579, address(reg));
         vm.prank(a);
@@ -267,7 +334,7 @@ contract HotTierExecutorTest is Test {
         assertEq(t.length, 2);
         assertEq(t[0], address(usdc));
         assertEq(t[1], ETH);
-        assertTrue(ex.isAllowed(a, address(usdc), IERC20.approve.selector));
+        assertTrue(ex.isAllowed(a, address(p), Pinger.ping.selector));
         assertTrue(ex.isAllowed(a, address(usdc), IERC20.transfer.selector)); // implicit: tracked token
         assertFalse(ex.isAllowed(a, address(dai), IERC20.transfer.selector));
         assertFalse(ex.isAllowed(a, address(usdc), IERC20.transferFrom.selector));
@@ -275,7 +342,7 @@ contract HotTierExecutorTest is Test {
         assertEq(ex.available(a, ETH), ETH_CAP);
         assertEq(ex.available(a, address(dai)), 0);
         assertEq(ex.effectiveBps(a), 10_000);
-        assertEq(ex.nonceOf(a), 0);
+        assertEq(ex.nonceOf(a), 1); // configuring kills pending signatures
     }
 
     function test_install_moduleTypeAndInitialized() public view {
@@ -321,25 +388,64 @@ contract HotTierExecutorTest is Test {
         assertEq(usdc.balanceOf(bob), 100e6);
     }
 
+    function test_setCap_checkpointsBucketFirst() public {
+        _hot(_xfer(address(usdc), bob, 600e6)); // level 400
+        vm.warp(block.timestamp + WINDOW / 2); // refill +500 at the old cap -> 900
+        vm.prank(address(acct));
+        ex.setCap(address(usdc), 2 * CAP);
+        // without the checkpoint the old timestamp would refill at the new rate: 400 + 1000 = 1400
+        assertEq(ex.available(address(acct), address(usdc)), 900e6);
+        vm.warp(block.timestamp + WINDOW / 4); // +500 at the new cap
+        assertEq(ex.available(address(acct), address(usdc)), 1_400e6);
+    }
+
     function test_setAllowed_togglesAndEmits() public {
+        Pinger p = new Pinger();
         vm.expectEmit(address(ex));
-        emit HotTierExecutor.AllowSet(address(acct), address(usdc), IERC20.approve.selector, true);
+        emit HotTierExecutor.AllowSet(address(acct), address(p), Pinger.ping.selector, true);
         vm.prank(address(acct));
-        ex.setAllowed(address(usdc), IERC20.approve.selector, true);
-        assertTrue(ex.isAllowed(address(acct), address(usdc), IERC20.approve.selector));
+        ex.setAllowed(address(p), Pinger.ping.selector, true);
+        assertTrue(ex.isAllowed(address(acct), address(p), Pinger.ping.selector));
         vm.prank(address(acct));
-        ex.setAllowed(address(usdc), IERC20.approve.selector, false);
+        ex.setAllowed(address(p), Pinger.ping.selector, false);
+        assertFalse(ex.isAllowed(address(acct), address(p), Pinger.ping.selector));
+    }
+
+    function test_setAllowed_rejectsApprovalClass() public {
+        bytes4[5] memory sels = [bytes4(0x095ea7b3), 0x39509351, 0xa22cb465, 0x87517c45, 0xd505accf];
+        for (uint256 i = 0; i < sels.length; i++) {
+            vm.prank(address(acct));
+            vm.expectRevert(HotTierExecutor.InvalidSetup.selector);
+            ex.setAllowed(address(usdc), sels[i], true);
+            assertFalse(ex.isAllowed(address(acct), address(usdc), sels[i]));
+        }
+    }
+
+    function test_isAllowed_mirrorsRunStaticChecks() public {
+        vm.startPrank(address(acct));
+        ex.setAllowed(address(acct), Pinger.ping.selector, true);
+        ex.setAllowed(address(ex), Pinger.ping.selector, true);
+        ex.setAllowed(address(0), Pinger.ping.selector, true);
+        vm.stopPrank();
+        assertFalse(ex.isAllowed(address(acct), address(acct), Pinger.ping.selector));
+        assertFalse(ex.isAllowed(address(acct), address(ex), Pinger.ping.selector));
+        assertFalse(ex.isAllowed(address(acct), address(0), Pinger.ping.selector));
+        assertFalse(ex.isAllowed(address(acct), address(0), IERC20.transfer.selector)); // ETH is tracked
         assertFalse(ex.isAllowed(address(acct), address(usdc), IERC20.approve.selector));
+        assertTrue(ex.isAllowed(address(acct), address(usdc), IERC20.transfer.selector));
     }
 
     function test_setHotSigner_validatesAndRotates() public {
         vm.prank(address(acct));
         vm.expectRevert(HotTierExecutor.InvalidSetup.selector);
         ex.setHotSigner(HotTierExecutor.HotSigner(HotTierExecutor.Family.SECP256K1, address(0), 0, 0));
+        vm.prank(address(acct));
+        vm.expectRevert(HotTierExecutor.InvalidSetup.selector);
+        ex.setHotSigner(HotTierExecutor.HotSigner(HotTierExecutor.Family.P256, address(0), bytes32(uint256(1)), 0));
 
         address hot2 = makeAddr("hot2");
         vm.expectEmit(address(ex));
-        emit HotTierExecutor.HotSignerSet(address(acct), HotTierExecutor.Family.SECP256K1, hot2);
+        emit HotTierExecutor.HotSignerSet(address(acct), HotTierExecutor.Family.SECP256K1, hot2, 0, 0);
         vm.prank(address(acct));
         ex.setHotSigner(HotTierExecutor.HotSigner(HotTierExecutor.Family.SECP256K1, hot2, 0, 0));
 
@@ -444,19 +550,32 @@ contract HotTierExecutorTest is Test {
 
     // ------------------------------------------------------------------ allowlist and targets
 
-    function test_approveNotAllowlisted_reverts() public {
+    function test_approvalClass_neverCallable() public {
         _expectHotRevert(
             _call(address(usdc), 0, abi.encodeCall(IERC20.approve, (bob, 1))),
             abi.encodeWithSelector(HotTierExecutor.CallNotAllowed.selector, address(usdc), IERC20.approve.selector)
         );
+        _expectHotRevert(
+            _call(address(usdc), 0, abi.encodeWithSelector(0x39509351, bob, 1)),
+            abi.encodeWithSelector(HotTierExecutor.CallNotAllowed.selector, address(usdc), bytes4(0x39509351))
+        );
+        assertEq(usdc.allowance(address(acct), bob), 0);
     }
 
     function test_allowlistedSelector_passes() public {
+        Pinger p = new Pinger();
         vm.prank(address(acct));
-        ex.setAllowed(address(usdc), IERC20.approve.selector, true);
-        _hot(_call(address(usdc), 0, abi.encodeCall(IERC20.approve, (bob, 5e6))));
-        assertEq(usdc.allowance(address(acct), bob), 5e6);
+        ex.setAllowed(address(p), Pinger.ping.selector, true);
+        _hot(_call(address(p), 0.1 ether, abi.encodeCall(Pinger.ping, (42))));
+        assertEq(p.last(), 42);
+        assertEq(p.caller(), address(acct));
+        assertEq(ex.available(address(acct), ETH), ETH_CAP - 0.1 ether);
         assertEq(ex.available(address(acct), address(usdc)), CAP);
+        // another selector on the same target is not allowed
+        _expectHotRevert(
+            _call(address(p), 0, abi.encodeCall(p.last, ())),
+            abi.encodeWithSelector(HotTierExecutor.CallNotAllowed.selector, address(p), p.last.selector)
+        );
     }
 
     function test_untrackedTokenTransfer_notAllowed() public {
@@ -490,8 +609,12 @@ contract HotTierExecutorTest is Test {
         );
     }
 
-    function test_emptyCalldata_ok() public {
-        _hot(_call(bob, 0, ""));
+    function test_emptyCalldata_onlyWithValue() public {
+        _expectHotRevert(
+            _call(bob, 0, ""), abi.encodeWithSelector(HotTierExecutor.CallNotAllowed.selector, bob, bytes4(0))
+        );
+        _hot(_call(bob, 1, ""));
+        assertEq(bob.balance, 1);
         assertEq(ex.available(address(acct), address(usdc)), CAP);
     }
 
@@ -514,6 +637,65 @@ contract HotTierExecutorTest is Test {
             _call(address(r), 0, abi.encodeCall(Reenterer.reenter, (ex, address(acct)))),
             abi.encodeWithSelector(ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector)
         );
+    }
+
+    // ------------------------------------------------------------------ account modules are never targets
+
+    function test_moduleTarget_validatorRotateKeyForbidden() public {
+        MockVerifier mv = new MockVerifier();
+        KeyStore ks = new KeyStore();
+        QuantumValidator v = new QuantumValidator();
+        address keyPtr = ks.store(abi.encodePacked(uint8(1), bytes32("pk")));
+        acct.installModuleForTest(
+            MODULE_TYPE_VALIDATOR,
+            address(v),
+            abi.encode(
+                QuantumValidator.InstallData({
+                    verifier: address(mv), keyPtr: keyPtr, guardians: new bytes[](0), threshold: 0, delay: 0
+                })
+            )
+        );
+        address newPtr = ks.store(abi.encodePacked(uint8(1), bytes32("attacker")));
+        vm.startPrank(address(acct));
+        ex.setAllowed(address(v), QuantumValidator.rotateKey.selector, true);
+        ex.setAllowed(address(v), IERC7579Module.onUninstall.selector, true);
+        vm.stopPrank();
+        bytes memory err = abi.encodeWithSelector(HotTierExecutor.ForbiddenTarget.selector, address(v));
+        _expectHotRevert(_call(address(v), 0, abi.encodeCall(QuantumValidator.rotateKey, (address(mv), newPtr))), err);
+        _expectHotRevert(_call(address(v), 0, abi.encodeCall(IERC7579Module.onUninstall, (""))), err);
+        _expectHotRevert(_call(address(v), 1, ""), err);
+        assertEq(v.configOf(address(acct)).keyPtr, keyPtr);
+    }
+
+    function test_moduleTarget_executorAndFallbackForbidden() public {
+        MockModule exe = new MockModule(MODULE_TYPE_EXECUTOR);
+        MockModule fb = new MockModule(MODULE_TYPE_FALLBACK);
+        MockModule plain = new MockModule(MODULE_TYPE_EXECUTOR); // not installed
+        acct.installModuleForTest(MODULE_TYPE_EXECUTOR, address(exe), "");
+        acct.installModuleForTest(MODULE_TYPE_FALLBACK, address(fb), abi.encodePacked(MockModule.ping.selector));
+        vm.startPrank(address(acct));
+        ex.setAllowed(address(exe), MockModule.ping.selector, true);
+        ex.setAllowed(address(fb), MockModule.ping.selector, true);
+        ex.setAllowed(address(plain), MockModule.ping.selector, true);
+        vm.stopPrank();
+        bytes memory ping = abi.encodeCall(MockModule.ping, ());
+        _expectHotRevert(
+            _call(address(exe), 0, ping), abi.encodeWithSelector(HotTierExecutor.ForbiddenTarget.selector, address(exe))
+        );
+        _expectHotRevert(
+            _call(address(fb), 0, ping), abi.encodeWithSelector(HotTierExecutor.ForbiddenTarget.selector, address(fb))
+        );
+        _hot(_call(address(plain), 0, ping));
+    }
+
+    function test_moduleQueryRevert_failsClosed() public {
+        BrokenModuleQueryAccount b = new BrokenModuleQueryAccount();
+        usdc.mint(address(b), 100e6);
+        b.configure(ex, _setup());
+        vm.prank(hot);
+        vm.expectRevert(bytes("no module query"));
+        ex.execute(address(b), _xfer(address(usdc), bob, 1));
+        assertEq(usdc.balanceOf(bob), 0);
     }
 
     // ------------------------------------------------------------------ canary registry
@@ -604,10 +786,11 @@ contract HotTierExecutorTest is Test {
         HotTierExecutor.Call[] memory calls = _xfer(address(usdc), bob, 100e6);
         uint256 deadline = block.timestamp + 1 hours;
         bytes memory sig = _sign(hotPk, address(acct), calls, deadline);
+        uint256 n0 = ex.nonceOf(address(acct));
         vm.prank(makeAddr("relayer"));
         ex.executeWithSig(address(acct), calls, deadline, sig);
         assertEq(usdc.balanceOf(bob), 100e6);
-        assertEq(ex.nonceOf(address(acct)), 1);
+        assertEq(ex.nonceOf(address(acct)), n0 + 1);
         vm.expectRevert(HotTierExecutor.Unauthorized.selector);
         ex.executeWithSig(address(acct), calls, deadline, sig);
         assertEq(usdc.balanceOf(bob), 100e6);
@@ -646,12 +829,13 @@ contract HotTierExecutorTest is Test {
         _setPasskey(pk);
         HotTierExecutor.Call[] memory calls = _xfer(address(usdc), bob, 50e6);
         uint256 deadline = block.timestamp + 5 minutes;
-        bytes memory sig = _webauthnSig(pk, ex.hotOpDigest(address(acct), calls, 0, deadline));
+        uint256 n0 = ex.nonceOf(address(acct));
+        bytes memory sig = _webauthnSig(pk, ex.hotOpDigest(address(acct), calls, n0, deadline));
         uint256 g = gasleft();
         ex.executeWithSig(address(acct), calls, deadline, sig);
         emit log_named_uint("gas: hot ERC-20 transfer, WebAuthn P-256 (Solidity fallback)", g - gasleft());
         assertEq(usdc.balanceOf(bob), 50e6);
-        assertEq(ex.nonceOf(address(acct)), 1);
+        assertEq(ex.nonceOf(address(acct)), n0 + 1);
         // replay: the nonce moved, the challenge no longer matches
         vm.expectRevert(HotTierExecutor.Unauthorized.selector);
         ex.executeWithSig(address(acct), calls, deadline, sig);
@@ -661,7 +845,7 @@ contract HotTierExecutorTest is Test {
         uint256 pk = uint256(keccak256("passkey")) % P256.N;
         _setPasskey(pk);
         HotTierExecutor.Call[] memory calls = _xfer(address(usdc), bob, 1);
-        bytes32 digest = ex.hotOpDigest(address(acct), calls, 0, block.timestamp);
+        bytes32 digest = ex.hotOpDigest(address(acct), calls, ex.nonceOf(address(acct)), block.timestamp);
         bytes memory bad = _webauthnSig(uint256(keccak256("other")) % P256.N, digest);
         vm.expectRevert(HotTierExecutor.Unauthorized.selector);
         ex.executeWithSig(address(acct), calls, block.timestamp, bad);
@@ -670,6 +854,16 @@ contract HotTierExecutorTest is Test {
         bytes memory good = _webauthnSig(pk, digest);
         vm.expectRevert(abi.encodeWithSelector(HotTierExecutor.ClassicalFamilyBroken.selector, 1));
         ex.executeWithSig(address(acct), calls, block.timestamp, good);
+    }
+
+    function test_setHotSigner_killsPendingSignatures() public {
+        HotTierExecutor.Call[] memory calls = _xfer(address(usdc), bob, 1);
+        bytes memory sig = _sign(hotPk, address(acct), calls, block.timestamp);
+        // re-setting the same key is the "revoke all pending signatures" action
+        vm.prank(address(acct));
+        ex.setHotSigner(HotTierExecutor.HotSigner(HotTierExecutor.Family.SECP256K1, hot, 0, 0));
+        vm.expectRevert(HotTierExecutor.Unauthorized.selector);
+        ex.executeWithSig(address(acct), calls, block.timestamp, sig);
     }
 
     // ------------------------------------------------------------------ Safe module path
@@ -688,11 +882,13 @@ contract HotTierExecutorTest is Test {
         );
     }
 
-    function test_safe_hotTransferAndCap() public {
-        (address owner, uint256 ownerPk) = makeAddrAndKey("safe-owner");
+    /// @dev 1-of-1 Safe 1.4.1 (EOA owner) with the executor enabled and configured via owner-signed txs.
+    function _safeWithExecutor() internal returns (Safe safe, uint256 ownerPk) {
+        address owner;
+        (owner, ownerPk) = makeAddrAndKey("safe-owner");
         address[] memory owners = new address[](1);
         owners[0] = owner;
-        Safe safe = Safe(
+        safe = Safe(
             payable(address(
                     new SafeProxyFactory()
                         .createProxyWithNonce(
@@ -711,6 +907,10 @@ contract HotTierExecutorTest is Test {
         HotTierExecutor.Setup memory s = _setup();
         s.kind = HotTierExecutor.AccountKind.SAFE;
         _safeExec(safe, ownerPk, address(ex), abi.encodeCall(HotTierExecutor.configure, (s)));
+    }
+
+    function test_safe_hotTransferAndCap() public {
+        (Safe safe,) = _safeWithExecutor();
         assertTrue(safe.isModuleEnabled(address(ex)));
         assertTrue(ex.isInitialized(address(safe)));
 
@@ -740,34 +940,64 @@ contract HotTierExecutorTest is Test {
         assertEq(usdc.balanceOf(bob), 400e6);
     }
 
+    function test_safe_enabledModuleTargetForbidden() public {
+        (Safe safe, uint256 ownerPk) = _safeWithExecutor();
+        Pinger other = new Pinger(); // stands in for any other enabled Safe module
+        _safeExec(safe, ownerPk, address(safe), abi.encodeCall(ModuleManager.enableModule, (address(other))));
+        _safeExec(
+            safe,
+            ownerPk,
+            address(ex),
+            abi.encodeCall(HotTierExecutor.setAllowed, (address(other), Pinger.ping.selector, true))
+        );
+        vm.prank(hot);
+        vm.expectRevert(abi.encodeWithSelector(HotTierExecutor.ForbiddenTarget.selector, address(other)));
+        ex.execute(address(safe), _call(address(other), 0, abi.encodeCall(Pinger.ping, (1))));
+        // once disabled it is an ordinary allowlisted target again
+        _safeExec(
+            safe,
+            ownerPk,
+            address(safe),
+            abi.encodeCall(ModuleManager.disableModule, (address(0x1), address(other))) // `other` heads the list
+        );
+        vm.prank(hot);
+        ex.execute(address(safe), _call(address(other), 0, abi.encodeCall(Pinger.ping, (1))));
+        assertEq(other.last(), 1);
+    }
+
     // ------------------------------------------------------------------ uninstall / reconfigure
 
-    function test_uninstall_bumpsGeneration() public {
+    function test_uninstall_bumpsGenerationAndKillsPendingSignatures() public {
+        Pinger p = new Pinger();
         vm.prank(address(acct));
-        ex.setAllowed(address(usdc), IERC20.approve.selector, true);
+        ex.setAllowed(address(p), Pinger.ping.selector, true);
         HotTierExecutor.Call[] memory calls = _xfer(address(usdc), bob, 1);
         ex.executeWithSig(address(acct), calls, block.timestamp, _sign(hotPk, address(acct), calls, block.timestamp));
-        assertEq(ex.nonceOf(address(acct)), 1);
+        bytes memory pending = _sign(hotPk, address(acct), calls, block.timestamp); // signed, not submitted
+        uint256 n0 = ex.nonceOf(address(acct));
 
         vm.prank(address(acct));
         acct.uninstallModule(MODULE_TYPE_EXECUTOR, address(ex), "");
         assertFalse(ex.isInitialized(address(acct)));
         assertEq(ex.trackedAssets(address(acct)).length, 0);
-        assertFalse(ex.isAllowed(address(acct), address(usdc), IERC20.approve.selector));
+        assertFalse(ex.isAllowed(address(acct), address(p), Pinger.ping.selector));
         _expectHotRevert(calls, abi.encodeWithSelector(HotTierExecutor.NotConfigured.selector, address(acct)));
 
         acct.installModuleForTest(MODULE_TYPE_EXECUTOR, address(ex), abi.encode(_setup()));
-        assertFalse(ex.isAllowed(address(acct), address(usdc), IERC20.approve.selector));
+        assertFalse(ex.isAllowed(address(acct), address(p), Pinger.ping.selector));
         _expectHotRevert(
-            _call(address(usdc), 0, abi.encodeCall(IERC20.approve, (bob, 1))),
-            abi.encodeWithSelector(HotTierExecutor.CallNotAllowed.selector, address(usdc), IERC20.approve.selector)
+            _call(address(p), 0, abi.encodeCall(Pinger.ping, (1))),
+            abi.encodeWithSelector(HotTierExecutor.CallNotAllowed.selector, address(p), Pinger.ping.selector)
         );
-        assertEq(ex.nonceOf(address(acct)), 1); // nonces never reset: old signatures stay dead
+        assertGt(ex.nonceOf(address(acct)), n0);
+        vm.expectRevert(HotTierExecutor.Unauthorized.selector);
+        ex.executeWithSig(address(acct), calls, block.timestamp, pending);
     }
 
     function test_reconfigure_replacesState() public {
+        Pinger p = new Pinger();
         vm.prank(address(acct));
-        ex.setAllowed(address(usdc), IERC20.approve.selector, true);
+        ex.setAllowed(address(p), Pinger.ping.selector, true);
         HotTierExecutor.Setup memory s = _setup();
         s.assets = new address[](1);
         s.assets[0] = address(dai);
@@ -775,7 +1005,7 @@ contract HotTierExecutorTest is Test {
         s.caps[0] = 5e18;
         vm.prank(address(acct));
         ex.configure(s);
-        assertFalse(ex.isAllowed(address(acct), address(usdc), IERC20.approve.selector));
+        assertFalse(ex.isAllowed(address(acct), address(p), Pinger.ping.selector));
         assertEq(ex.available(address(acct), address(usdc)), 0);
         assertEq(ex.available(address(acct), address(dai)), 5e18);
         _expectHotRevert(

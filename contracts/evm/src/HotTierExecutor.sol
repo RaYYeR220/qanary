@@ -4,7 +4,11 @@ pragma solidity ^0.8.28;
 import {
     IERC7579Module,
     IERC7579Execution,
+    IERC7579ModuleConfig,
+    MODULE_TYPE_VALIDATOR,
     MODULE_TYPE_EXECUTOR,
+    MODULE_TYPE_FALLBACK,
+    MODULE_TYPE_HOOK,
     Execution
 } from "@openzeppelin/contracts/interfaces/draft-IERC7579.sol";
 import {
@@ -32,6 +36,28 @@ import {ISafe} from "./interfaces/ISafe.sol";
 ///      account, a reverting registry or a reverting `balanceOf` on a tracked asset reverts the whole
 ///      operation. Outflows are the net decrease of each tracked asset's balance across the batch;
 ///      assets that are not tracked can only leave through explicitly allowlisted calls.
+///
+///      Trust model. Hard denials that no configuration can lift: calls to the account itself, to
+///      this executor or to `address(0)` (OZ ERC-7579 accounts treat target 0 as a self-call); calls
+///      to the account's installed modules (ERC-7579: validators, executors, hooks, and a fallback
+///      handler registered for the selector being called; Safe: enabled modules), whose admin
+///      functions act on `msg.sender == account`; approval-class selectors (`approve`,
+///      `increaseAllowance`, `setApprovalForAll`, Permit2 `approve`, EIP-2612 `permit`), which would
+///      let a spender pull funds later, outside the executor; and empty calldata without value.
+///      Under these rules the hot key can move at most `cap * bps / 10000` plus one window of
+///      refill of each tracked asset per window. The bound does NOT hold when:
+///      - an allowlisted call converts an untracked position or credit into a tracked asset (vault
+///        or LP withdrawals, borrows, flash-style inflows): the tracked inflow masks a tracked
+///        outflow while the untracked side is drained. Track every asset an allowlisted call touches;
+///      - a tracked token's `balanceOf` can be inflated or manipulated within the batch (rebasing or
+///        hook tokens, a malicious token);
+///      - an allowlisted target exposes admin functions keyed on `msg.sender == account` on a
+///        contract that is not a detectable module: a Safe's fallback handler or guard, a Safe7579
+///        adapter seen through the ERC-7579 interface, a fallback handler called with a selector
+///        other than the one it is registered for, an external registry or position manager.
+///
+///      Safe: the native `disableModule` does not call `onUninstall`, so the configuration survives
+///      and comes back on a later re-enable. Batch `executor.onUninstall("")` with `disableModule`.
 contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
     /// @notice Curve family of the hot key, matching the canary registry's family ids.
     enum Family {
@@ -113,10 +139,19 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
     /// @dev Highest address treated as a (possible) precompile; the registry must live above it.
     uint160 private constant MAX_PRECOMPILE = 0xffff;
 
+    /// @dev Approval-class selectors that can never be allowlisted or called.
+    bytes4 private constant APPROVE = 0x095ea7b3; // approve(address,uint256)
+    bytes4 private constant INCREASE_ALLOWANCE = 0x39509351; // increaseAllowance(address,uint256)
+    bytes4 private constant SET_APPROVAL_FOR_ALL = 0xa22cb465; // setApprovalForAll(address,bool)
+    bytes4 private constant PERMIT2_APPROVE = 0x87517c45; // approve(address,address,uint160,uint48)
+    bytes4 private constant PERMIT = 0xd505accf; // permit(address,address,uint256,uint256,uint8,bytes32,bytes32)
+
     mapping(address account => Config) private _config;
     /// @dev Bumped by every (re)configuration and uninstall; allowlist entries are scoped to it.
     mapping(address account => uint256) private _generation;
-    /// @dev Signed-operation nonce. Never reset, so signatures die across uninstall/reinstall.
+    /// @dev Signed-operation nonce. Never reset; bumped by every signed operation, (re)configuration,
+    ///      uninstall and hot-key change, so signatures collected but not submitted die whenever
+    ///      any of these happens.
     mapping(address account => uint256) private _nonce;
     mapping(address account => mapping(address asset => bool)) private _tracked;
     mapping(address account => mapping(address asset => Bucket)) private _buckets;
@@ -131,13 +166,14 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
     /// @notice The cap of a tracked asset of `account` was set.
     event CapSet(address indexed account, address indexed asset, uint128 cap);
     /// @notice The hot key of `account` was set.
-    event HotSignerSet(address indexed account, Family family, address eoa);
+    event HotSignerSet(address indexed account, Family family, address eoa, bytes32 pubX, bytes32 pubY);
     /// @notice A hot operation ran; `outflows[i]` is the net outflow of `trackedAssets(account)[i]`.
     event HotOpExecuted(address indexed account, bytes32 indexed callsHash, uint256[] outflows);
 
     /// @notice `account` has no configuration.
     error NotConfigured(address account);
-    /// @notice The configuration violates a rule (window, lengths, duplicates, bps, registry, signer, untracked asset).
+    /// @notice The configuration violates a rule (window, lengths, duplicates, bps, registry, signer,
+    ///         untracked asset, approval-class selector).
     error InvalidSetup();
     /// @notice The caller or signature is not the account's hot key.
     error Unauthorized();
@@ -147,9 +183,11 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
     error ClassicalFamilyBroken(uint8 family);
     /// @notice The current ladder level scales the hot tier to zero.
     error HotTierFrozen(uint8 level);
-    /// @notice Calls to the account itself, this executor or `address(0)` are never allowed.
+    /// @notice Calls to the account itself, this executor, `address(0)` or an installed/enabled
+    ///         module of the account are never allowed.
     error ForbiddenTarget(address target);
-    /// @notice The (target, selector) pair is not allowed.
+    /// @notice The (target, selector) pair is not allowed (not allowlisted, approval-class, or
+    ///         malformed/empty calldata without value).
     error CallNotAllowed(address target, bytes4 selector);
     /// @notice A call sends native value but ETH (`address(0)`) is not a tracked asset.
     error ValueNotTracked();
@@ -168,7 +206,9 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
         _configure(msg.sender, abi.decode(data, (Setup)));
     }
 
-    /// @notice Deletes the calling account's configuration and buckets and invalidates its allowlist.
+    /// @notice Deletes the calling account's configuration and buckets and invalidates its allowlist
+    ///         and pending signatures.
+    /// @dev A Safe's native `disableModule` does not call this; batch it with `disableModule`.
     function onUninstall(bytes calldata) external nonReentrant {
         _wipe(msg.sender);
     }
@@ -193,45 +233,52 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
     ///         start full and earlier allowlist entries stop applying.
     /// @dev Rules: `window > 0`; `assets.length == caps.length <= MAX_ASSETS`; no duplicate
     ///      assets; `levelBps[i] <= 10000` and non-increasing; `registry` is deployed code above the
-    ///      precompile range; a SECP256K1 signer needs `eoa != 0`, a P256 signer `pubX != 0`.
+    ///      precompile range; a SECP256K1 signer needs `eoa != 0`, a P256 signer `pubX != 0` and
+    ///      `pubY != 0`; no allow entry uses an approval-class selector. Pending signatures die.
     /// @param s The new configuration.
     function configure(Setup calldata s) external nonReentrant {
         _configure(msg.sender, s);
     }
 
     /// @notice Sets or clears an allowlist entry of the calling account (current generation).
+    /// @dev Approval-class selectors are rejected with `InvalidSetup`.
     /// @param target The call target.
     /// @param selector The function selector.
     /// @param allowed Whether hot operations may call `selector` on `target`.
     function setAllowed(address target, bytes4 selector, bool allowed) external nonReentrant {
         address account = msg.sender;
         _requireConfigured(account);
+        if (_isApprovalSelector(selector)) revert InvalidSetup();
         _allowed[account][_generation[account]][target][selector] = allowed;
         emit AllowSet(account, target, selector, allowed);
     }
 
-    /// @notice Sets the cap of a tracked asset of the calling account. The bucket keeps its level,
-    ///         clamped to the new cap.
+    /// @notice Sets the cap of a tracked asset of the calling account. The bucket is first
+    ///         checkpointed at the current threat level, then clamped to the new cap.
     /// @param asset A tracked asset (`address(0)` for ETH).
     /// @param cap The new cap at full scale (10000 bps).
     function setCap(address asset, uint128 cap) external nonReentrant {
         address account = msg.sender;
-        _requireConfigured(account);
+        Config storage c = _requireConfigured(account);
         if (!_tracked[account][asset]) revert InvalidSetup();
         Bucket storage b = _buckets[account][asset];
+        // refilled <= old cap <= type(uint128).max
+        uint128 level = uint128(_refilled(b, _effectiveBps(c), c.window));
+        b.available = level > cap ? cap : level;
+        b.updatedAt = uint64(block.timestamp);
         b.cap = cap;
-        if (b.available > cap) b.available = cap;
         emit CapSet(account, asset, cap);
     }
 
-    /// @notice Replaces the hot key of the calling account.
+    /// @notice Replaces the hot key of the calling account. Pending signatures die.
     /// @param signer The new hot key.
     function setHotSigner(HotSigner calldata signer) external nonReentrant {
         address account = msg.sender;
         _requireConfigured(account);
         _requireValidSigner(signer);
         _config[account].signer = signer;
-        emit HotSignerSet(account, signer.family, signer.eoa);
+        ++_nonce[account];
+        emit HotSignerSet(account, signer.family, signer.eoa, signer.pubX, signer.pubY);
     }
 
     // ------------------------------------------------------------------ hot operations
@@ -298,14 +345,21 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
         return _refilled(_buckets[account][asset], _effectiveBps(c), c.window);
     }
 
-    /// @notice Whether a call to `target` with `selector` passes the allowlist stage of a hot op:
-    ///         explicitly allowlisted in the current generation, or `transfer` on a tracked token.
+    /// @notice Whether a hot op may call `selector` on `target`, mirroring the static checks of a
+    ///         run: false for `address(0)`, the account, this executor and approval-class selectors;
+    ///         otherwise true iff explicitly allowlisted in the current generation or `transfer` on a
+    ///         tracked token.
+    /// @dev Does not check whether `target` is an installed/enabled module of the account (that is
+    ///      only known at run time, where such targets revert with `ForbiddenTarget`), nor value rules.
     /// @param account The account.
     /// @param target The call target.
     /// @param selector The function selector.
     /// @return True if allowed.
     function isAllowed(address account, address target, bytes4 selector) external view returns (bool) {
-        if (!isInitialized(account)) return false;
+        if (
+            !isInitialized(account) || target == account || target == address(this) || target == address(0)
+                || _isApprovalSelector(selector)
+        ) return false;
         return _isAllowed(account, _generation[account], target, selector);
     }
 
@@ -353,14 +407,16 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
         }
         for (uint256 i = 0; i < s.allow.length; ++i) {
             AllowEntry memory e = s.allow[i];
+            if (_isApprovalSelector(e.selector)) revert InvalidSetup();
             _allowed[account][gen][e.target][e.selector] = true;
             emit AllowSet(account, e.target, e.selector, true);
         }
-        emit HotSignerSet(account, s.signer.family, s.signer.eoa);
+        emit HotSignerSet(account, s.signer.family, s.signer.eoa, s.signer.pubX, s.signer.pubY);
         emit Configured(account, s.kind, s.registry);
     }
 
-    /// @dev Deletes config, buckets and tracked flags and bumps the generation (orphaning the allowlist).
+    /// @dev Deletes config, buckets and tracked flags, bumps the generation (orphaning the
+    ///      allowlist) and the nonce (killing pending signatures).
     function _wipe(address account) private {
         address[] storage assets = _config[account].assets;
         for (uint256 i = 0; i < assets.length; ++i) {
@@ -369,21 +425,28 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
         }
         delete _config[account];
         ++_generation[account];
+        ++_nonce[account];
     }
 
     function _run(address account, Config storage c, Call[] calldata calls) private {
         uint16 bps = _requireLiveBps(c);
         uint256 gen = _generation[account];
+        AccountKind kind = c.kind;
         for (uint256 i = 0; i < calls.length; ++i) {
             Call calldata call = calls[i];
             address target = call.target;
             if (target == account || target == address(this) || target == address(0)) revert ForbiddenTarget(target);
-            if (call.value != 0 && !_tracked[account][address(0)]) revert ValueNotTracked();
             uint256 len = call.data.length;
-            if (len == 0) continue;
-            if (len < 4) revert CallNotAllowed(target, bytes4(0));
-            bytes4 selector = bytes4(call.data[:4]);
-            if (!_isAllowed(account, gen, target, selector)) revert CallNotAllowed(target, selector);
+            bytes4 selector = len < 4 ? bytes4(0) : bytes4(call.data[:4]);
+            if (_isAccountModule(account, kind, target, selector)) revert ForbiddenTarget(target);
+            if (call.value != 0 && !_tracked[account][address(0)]) revert ValueNotTracked();
+            if (len == 0) {
+                if (call.value == 0) revert CallNotAllowed(target, bytes4(0));
+                continue;
+            }
+            if (len < 4 || _isApprovalSelector(selector) || !_isAllowed(account, gen, target, selector)) {
+                revert CallNotAllowed(target, selector);
+            }
         }
 
         address[] memory assets = c.assets;
@@ -392,7 +455,7 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
         for (uint256 i = 0; i < n; ++i) {
             outflows[i] = _balanceOf(account, assets[i]);
         }
-        _dispatch(account, c.kind, calls);
+        _dispatch(account, kind, calls);
         uint32 window = c.window;
         for (uint256 i = 0; i < n; ++i) {
             uint256 pre = outflows[i];
@@ -470,6 +533,27 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
                 || (selector == IERC20.transfer.selector && _tracked[account][target]);
     }
 
+    /// @dev Whether `target` is an installed (ERC-7579) or enabled (Safe) module of the account. The
+    ///      fallback query passes the called selector as context (ERC-7579 accounts key fallback
+    ///      handlers by selector). A reverting or malformed answer bubbles: the operation fails closed.
+    function _isAccountModule(address account, AccountKind kind, address target, bytes4 selector)
+        private
+        view
+        returns (bool)
+    {
+        if (kind == AccountKind.SAFE) return ISafe(account).isModuleEnabled(target);
+        IERC7579ModuleConfig a = IERC7579ModuleConfig(account);
+        return a.isModuleInstalled(MODULE_TYPE_VALIDATOR, target, "")
+            || a.isModuleInstalled(MODULE_TYPE_EXECUTOR, target, "")
+            || a.isModuleInstalled(MODULE_TYPE_FALLBACK, target, abi.encodePacked(selector))
+            || a.isModuleInstalled(MODULE_TYPE_HOOK, target, "");
+    }
+
+    function _isApprovalSelector(bytes4 s) private pure returns (bool) {
+        return
+            s == APPROVE || s == INCREASE_ALLOWANCE || s == SET_APPROVAL_FOR_ALL || s == PERMIT2_APPROVE || s == PERMIT;
+    }
+
     /// @dev A reverting or malformed `balanceOf` bubbles: the operation fails closed.
     function _balanceOf(address account, address asset) private view returns (uint256) {
         return asset == address(0) ? account.balance : IERC20(asset).balanceOf(account);
@@ -504,7 +588,9 @@ contract HotTierExecutor is IERC7579Module, EIP712, ReentrancyGuardTransient {
     }
 
     function _requireValidSigner(HotSigner memory s) private pure {
-        if (s.family == Family.SECP256K1 ? s.eoa == address(0) : s.pubX == bytes32(0)) revert InvalidSetup();
+        if (s.family == Family.SECP256K1 ? s.eoa == address(0) : (s.pubX == bytes32(0) || s.pubY == bytes32(0))) {
+            revert InvalidSetup();
+        }
     }
 
     function _isRegistry(address registry) private view returns (bool) {

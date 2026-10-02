@@ -13,4 +13,9 @@ interface ISafe {
     function execTransactionFromModule(address to, uint256 value, bytes calldata data, uint8 operation)
         external
         returns (bool);
+
+    /// @notice Whether `module` is enabled on the Safe.
+    /// @param module The module address.
+    /// @return True if enabled.
+    function isModuleEnabled(address module) external view returns (bool);
 }
