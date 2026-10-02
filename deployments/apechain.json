@@ -1,0 +1,100 @@
+{
+  "network": "apechain",
+  "chainId": 33139,
+  "rpc": "https://rpc.apechain.com/http",
+  "deployer": "0xe46b3a14790f6fb24B0067475FC4C5875d1233cA",
+  "arbos": 51,
+  "stylusVersion": 2,
+  "toolchain": {
+    "image": "qanary/stylus:0.10.9",
+    "cargoStylus": "0.10.9",
+    "rust": "1.95.0"
+  },
+  "stylus": {
+    "mldsa44Verifier": {
+      "address": "0x38Fc3687363F1A69cc7B07b79F54DeBF885f23e1",
+      "deployTx": "0xa0dc679c19606a321b767e0d258dd8a8564ac8475827d6baf5f335ac82d5069a",
+      "activationTx": "0x2c5e12291ba8f81d2972754479724cebffbc864cacc55a98da7e1c6667743993",
+      "sizeBytes": 15933,
+      "dataFeeWei": "86780773239342",
+      "codehash": "0x201ad0bf7a8e7600a3acd5e074da07d95ce979292043611bb2740a2941f61259",
+      "programVersion": 2,
+      "deployGasUsed": 3498864,
+      "activationGasUsed": 3350590,
+      "costWei": "696558167986279342",
+      "verifyCallGas": 207646,
+      "verify": {
+        "fixture": "vectors/mldsa44.{pk,msg,sig}, key 0x02||pk",
+        "result": "0x024ad318",
+        "wrongHashResult": "0xffffffff",
+        "gas": 207646
+      }
+    },
+    "mldsa65Verifier": {
+      "address": "0x187551ed28f6a105953aABb163AF6cd53f75C197",
+      "deployTx": "0x977c491e9b2053c376743f84ef3b483c0a505c06b52e592191be4643d9ddda50",
+      "activationTx": "0x4b4ed446e226f5858913de2798c9b608ae99f15467c291f3b90df29cbddf2951",
+      "sizeBytes": 15885,
+      "dataFeeWei": "87732466153637",
+      "codehash": "0xbfc9508ef9d9ac8d474043cab7a957ac9438270a15f2b0e85d5cea40e4eb2078",
+      "programVersion": 2,
+      "deployGasUsed": 3488627,
+      "activationGasUsed": 3413450,
+      "costWei": "701909971558673637",
+      "verifyCallGas": 289315,
+      "verify": {
+        "fixture": "vectors/mldsa65.{pk,msg,sig}, key 0x03||pk",
+        "result": "0x024ad318",
+        "wrongHashResult": "0xffffffff",
+        "gas": 289315
+      }
+    },
+    "falcon512Verifier": {
+      "address": "0x051736a3cD6AC6eA5Bc062E0B964eA6279f7cbA3",
+      "deployTx": "0x6d5a795272dac75956373f19b3218bd2872557994c9706e2a5f9458dbff0be15",
+      "activationTx": "0x777566fb63116846c3fa3d41aa6462c3ab94515175325a2cc0ef2ebe5efb4b70",
+      "sizeBytes": 17166,
+      "dataFeeWei": "78626391170676",
+      "codehash": "0xc7fbdd88082c4af3d953a95a0dd9262ea9f5a73565c3f9c689d900c53048e4e8",
+      "programVersion": 2,
+      "deployGasUsed": 3765640,
+      "activationGasUsed": 2919558,
+      "costWei": "679848010177650676",
+      "verifyCallGas": 97541,
+      "verify": {
+        "fixture": "vectors/falcon512_devsign.{pk,msg,sig}, key 0x04||pk",
+        "result": "0x024ad318",
+        "wrongHashResult": "0xffffffff",
+        "gas": 97541,
+        "fndsa512": {
+          "fixture": "vectors/fndsa512.{pk,msg,sig}, key 0x01||pk",
+          "result": "0x024ad318",
+          "gas": 98662
+        }
+      }
+    },
+    "ladderVerifier": {
+      "address": "0x7DEAe8711B07004017CcAFd71b64F3b944E8DC4F",
+      "deployTx": "0x18cec8d5827132b51d012764caf8e53e79b19487186f110cd2aad92a03218934",
+      "activationTx": "0x8c267e1b446938252bbb194de47b19c0be419bf0f0fb2453890e7d3be9c42916",
+      "sizeBytes": 16546,
+      "dataFeeWei": "80320249732800",
+      "codehash": "0x02e2af64dbea10201ef6918b0540dfcb9baa88c6c22a818c7daffe314ee48e32",
+      "programVersion": 2,
+      "deployGasUsed": 3631511,
+      "activationGasUsed": 3011498,
+      "costWei": "675559810074572800",
+      "verifyCallGas": 828518,
+      "verify": {
+        "fixture": "vectors/ladder/{secp160r1,p192,p224}.json (first valid vector)",
+        "result": true,
+        "tamperedResult": false,
+        "gasByCurve": {
+          "secp160r1": 828518,
+          "p192": 959401,
+          "p224": 1152888
+        }
+      }
+    }
+  }
+}
