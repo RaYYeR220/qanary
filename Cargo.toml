@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = []
+members = ["crates/qanary-pq", "crates/qanary-curves", "contracts/stylus/mldsa44-verifier", "contracts/stylus/mldsa65-verifier", "contracts/stylus/falcon512-verifier", "contracts/stylus/ladder-verifier"]
 
 [workspace.package]
 edition = "2021"
