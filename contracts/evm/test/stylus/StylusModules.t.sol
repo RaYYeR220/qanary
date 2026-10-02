@@ -187,7 +187,8 @@ contract StylusModulesTest is DevSign {
         );
         bytes[] memory sigs = new bytes[](3);
         for (uint256 i = 0; i < 3; ++i) {
-            sigs[i] = _sign(o[i].scheme, o[i].label, txHash);
+            // each key signs the Safe transaction hash bound to this Safe and chain
+            sigs[i] = _sign(o[i].scheme, o[i].label, o[i].owner.safeMessageDigest(address(safe), txHash));
         }
         bytes memory packed = SafeSig.contractSignatures(owners, sigs);
 
