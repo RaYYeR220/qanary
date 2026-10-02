@@ -1,0 +1,135 @@
+.hero {
+  display: grid;
+  grid-template-areas:
+    'copy'
+    'figure'
+    'control';
+  row-gap: var(--s3);
+  padding: var(--s3) var(--gutter) var(--s4);
+}
+
+.figure {
+  grid-area: figure;
+  margin-inline: calc(var(--gutter) * -0.4);
+}
+
+.caption {
+  margin-top: var(--s0);
+  padding-inline: var(--s0);
+  font-size: var(--step--1);
+  line-height: var(--lead-small);
+  font-style: italic;
+  text-align: center;
+  text-wrap: balance;
+  color: var(--ink-muted);
+}
+
+/* a name set roman inside an italic caption, as the plate books did */
+.binomial {
+  font-style: normal;
+}
+
+/* the state of the impression, lettered in the plate's lower margin */
+.state {
+  position: absolute;
+  right: 4.5%;
+  bottom: 2.4%;
+  font-size: var(--step--2);
+  font-style: italic;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.copy {
+  grid-area: copy;
+  container-type: inline-size;
+}
+
+.lede {
+  margin-top: var(--s1);
+  max-width: 38ch;
+  font-size: 1.0625rem;
+  line-height: 1.55;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  margin-top: var(--s3);
+}
+
+.secondary {
+  font-size: var(--step--1);
+  color: var(--ink);
+}
+
+.control {
+  grid-area: control;
+  margin-top: calc(var(--s2) * -0.5);
+}
+
+@media (max-width: 39.99em) {
+  .hero {
+    padding-top: var(--s2);
+    row-gap: var(--s2);
+  }
+
+  .actions {
+    margin-top: var(--s2);
+  }
+
+  /* the masthead already links to the workings on a phone */
+  .secondary {
+    display: none;
+  }
+}
+
+@media (min-width: 40em) {
+  .lede {
+    margin-top: var(--s2);
+    font-size: var(--step-0);
+    line-height: var(--lead-text);
+  }
+
+  .figure {
+    margin-inline: 0;
+    justify-self: center;
+    width: min(100%, 34rem);
+  }
+}
+
+@media (min-width: 64em) {
+  .hero {
+    grid-template-columns: minmax(0, 1.04fr) minmax(0, 0.96fr);
+    grid-template-rows: 1fr auto;
+    grid-template-areas:
+      'figure copy'
+      'figure control';
+    column-gap: clamp(2.5rem, 5vw, 6.5rem);
+    row-gap: var(--s4);
+    min-height: 100svh;
+    padding: var(--s2) var(--gutter);
+    align-items: end;
+  }
+
+  .figure {
+    align-self: center;
+    justify-self: center;
+    /* the plate is 4:5; keep plate and caption inside one screen */
+    width: min(100%, calc((100svh - 7.5rem) * 0.8));
+  }
+
+  .copy {
+    max-width: 36rem;
+  }
+
+  .control {
+    align-self: start;
+    max-width: 36rem;
+    margin-top: 0;
+    padding-top: var(--s2);
+    border-top: var(--hairline) solid var(--rule);
+  }
+}

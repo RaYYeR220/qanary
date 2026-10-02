@@ -1,0 +1,45 @@
+.marks {
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  border-top: var(--hairline) solid var(--rule-strong);
+  max-width: 60rem;
+}
+
+.entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 0.15rem;
+  padding: var(--s1) 0 var(--s2);
+  border-bottom: var(--hairline) solid var(--rule);
+}
+
+/* each name set as a mark in the display face; no borrowed logos */
+.mark {
+  font-family: var(--face-display);
+  font-size: var(--step-3);
+  line-height: 1.1;
+  color: var(--ink-strong);
+}
+
+.detail {
+  font-style: italic;
+  font-size: var(--step--1);
+  color: var(--accent);
+}
+
+.role {
+  margin-top: var(--s-1);
+  max-width: 36ch;
+  font-size: var(--step--1);
+  line-height: var(--lead-small);
+  color: var(--ink);
+}
+
+@media (min-width: 48em) {
+  .marks {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: var(--s3);
+  }
+}

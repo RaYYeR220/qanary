@@ -1,0 +1,101 @@
+.plate {
+  max-width: 72rem;
+}
+
+.figs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s1);
+  padding: var(--s2) var(--s1);
+}
+
+.fig {
+  position: relative;
+  max-width: 15rem;
+  width: 100%;
+  justify-self: center;
+}
+
+.figNo {
+  display: block;
+  margin-top: var(--s-1);
+  text-align: center;
+  font-family: var(--face-display);
+  font-style: italic;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.labels {
+  position: absolute;
+  inset: 0 0 auto 0;
+  aspect-ratio: 400 / 480;
+  pointer-events: none;
+}
+
+.rungLabel {
+  position: absolute;
+  transform: translateY(-55%);
+  font-size: var(--step--2);
+  font-variant-numeric: lining-nums;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.rungLabel[data-broken='true'] {
+  font-style: italic;
+  color: var(--ink-muted);
+}
+
+.caption {
+  margin-top: var(--s0);
+  text-align: center;
+  font-style: italic;
+  font-size: var(--step--1);
+  color: var(--ink-muted);
+}
+
+.side {
+  align-self: start;
+}
+
+.side p {
+  max-width: 34ch;
+}
+
+.side em {
+  color: var(--ink);
+}
+
+.explHead {
+  font-size: var(--step-2);
+  line-height: 1.2;
+  font-style: italic;
+  color: var(--ink);
+}
+
+.runin {
+  font-style: italic;
+  color: var(--ink-strong);
+}
+
+.limit {
+  padding: var(--s0) 0 var(--s0) var(--s1);
+  border-left: 2px solid var(--rust);
+}
+
+.limit em {
+  color: var(--ink-strong);
+}
+
+@media (min-width: 40em) {
+  .fig {
+    max-width: 22rem;
+  }
+
+  .figs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: var(--s3) var(--s2) var(--s2);
+    gap: var(--s2);
+  }
+}
