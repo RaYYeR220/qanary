@@ -20,7 +20,7 @@ import {
   type TransactionSerialized,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { arbitrum, arbitrumSepolia } from 'viem/chains';
+import { apeChain, arbitrum, arbitrumSepolia, curtis } from 'viem/chains';
 import {
   ARBITRUM_ONE_TOKENS,
   defaultExposureTokens,
@@ -137,6 +137,18 @@ describe('public key recovery', () => {
     expect(await recoverTransactionPublicKey(tx)).toBe(sponsor.publicKey);
     expect(await publicKeyFromTransaction(tx, local.address)).toBe(local.publicKey);
     expect(await publicKeyFromTransaction(tx, '0x0000000000000000000000000000000000000001')).toBeUndefined();
+  });
+
+  it('skips an unrecoverable authorization instead of failing the scan', async () => {
+    const good = await local.signAuthorization({ address: '0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B', chainId: 42161, nonce: 0 });
+    const tx = await minedLocal(
+      { type: 'eip7702', chainId: 42161, nonce: 0, gas: 100_000n, to: local.address, maxFeePerGas: 10n, maxPriorityFeePerGas: 1n, authorizationList: [good] },
+      sponsor,
+    );
+    const broken = { ...good, r: '0x0' as Hex, s: '0x0' as Hex };
+    const withBroken = { ...tx, authorizationList: [broken, good] } as Transaction;
+    await expect(recoverAuthorizationPublicKey(broken)).rejects.toThrow();
+    expect(await publicKeyFromTransaction(withBroken, local.address)).toBe(local.publicKey);
   });
 
   it('rejects a transaction whose signature does not match its sender', async () => {
@@ -290,6 +302,7 @@ describe('scanExposure', () => {
       isContract: false,
       nonce: 0,
       exposed: false,
+      nativeSymbol: 'ETH',
       balances: [{ token: zeroAddress, amount: 42n }],
     });
     expect(s.count('eth_getTransactionCount')).toBe(1);
@@ -310,9 +323,20 @@ describe('scanExposure', () => {
     expect(report).toMatchObject({ isContract: false, exposed: true, delegatedTo: delegate });
   });
 
-  it('default token list is Arbitrum One only', () => {
-    expect(defaultExposureTokens(42161)).toEqual(Object.values(ARBITRUM_ONE_TOKENS));
-    expect(defaultExposureTokens(421614)).toEqual([]);
+  it('ApeChain: APE as the native currency, no default tokens', async () => {
+    const s = chainState({ chain: curtis, address: sender, latest: 50n, nonceChanges: [] });
+    const report = await scanExposure(s.client, sender);
+    expect(report.nativeSymbol).toBe('APE');
+    expect(report.balances).toEqual([{ token: zeroAddress, amount: 42n }]);
+    expect(s.count('eth_call')).toBe(0);
+  });
+
+  it('default token list per network (empty where unknown)', () => {
+    expect(defaultExposureTokens(arbitrum.id)).toEqual(Object.values(ARBITRUM_ONE_TOKENS));
+    expect(defaultExposureTokens(apeChain.id)).toEqual([]);
+    expect(defaultExposureTokens(curtis.id)).toEqual([]);
+    expect(defaultExposureTokens(arbitrumSepolia.id)).toEqual([]);
+    expect(defaultExposureTokens(1)).toEqual([]);
   });
 });
 

@@ -237,7 +237,7 @@ export async function toQuantumValidator<entryPointVersion extends EntryPointVer
     ...account,
     source: 'QuantumValidator',
     validatorType: 'SECONDARY',
-    supportedKernelVersions: '>=0.3.0',
+    supportedKernelVersions: '0.3.3',
     address: validatorAddress,
     verifier,
     keyPtr,

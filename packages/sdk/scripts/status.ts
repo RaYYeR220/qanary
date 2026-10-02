@@ -1,31 +1,31 @@
 /**
  * Prints the state of a Qanary deployment and, optionally, of one account.
  *
- *   npx tsx scripts/status.ts [arbitrum-sepolia|arbitrum-one] [account]
+ *   npx tsx scripts/status.ts <arbitrum-one|apechain|apechain-curtis|arbitrum-sepolia> [account]
  *
  * Deployment: every contract with whether code is present; the canary registry's ladder level,
  * broken families, claims and bounties. Account: Kernel root validator, post-quantum root key and
  * guardians, hot-tier scale and availability; for an EOA, its quantum exposure.
  */
-import { createPublicClient, formatEther, http, isAddress, type Address, type PublicClient } from 'viem';
+import { createPublicClient, formatEther, http, isAddress, zeroAddress, type Address, type PublicClient } from 'viem';
 import {
   CANARY_TARGET,
   CORE_CONTRACTS,
   canary,
   hotTier,
-  kernelModuleAbi,
+  kernelAccountAbi,
   quantumValidatorAbi,
   scanExposure,
   type CanaryTarget,
 } from '../src/index.js';
-import { NETWORKS, deploymentPath, fail, readDeploymentFile, rpcUrl, type NetworkName } from './lib.js';
+import { chainFor, deploymentPath, fail, readDeploymentFile, resolveNetwork, rpcUrl } from './lib.js';
 
-const network = (process.argv[2] ?? 'arbitrum-sepolia') as NetworkName;
-if (!(network in NETWORKS)) fail(`unknown network ${network} (arbitrum-sepolia | arbitrum-one)`);
+const net = resolveNetwork(process.argv[2]);
 const accountArg = process.argv[3];
 if (accountArg !== undefined && !isAddress(accountArg)) fail(`not an address: ${accountArg}`);
+const symbol = net.nativeSymbol;
 
-const client = createPublicClient({ chain: NETWORKS[network].chain, transport: http(rpcUrl(network)) }) as PublicClient;
+const client = createPublicClient({ chain: chainFor(net), transport: http(rpcUrl(net)) }) as PublicClient;
 
 async function hasCode(address: Address): Promise<boolean> {
   const code = await client.getCode({ address });
@@ -38,10 +38,10 @@ async function show(label: string, address: Address | undefined): Promise<void> 
 }
 
 async function main(): Promise<void> {
-  const loaded = readDeploymentFile(network);
-  if (!loaded) fail(`${deploymentPath(network)} not found: nothing deployed on ${network} yet`);
+  const loaded = readDeploymentFile(net);
+  if (!loaded) fail(`${deploymentPath(net)} not found: nothing deployed on ${net.label} yet`);
   const d = loaded.deployment;
-  console.log(`${network} (chain ${d.chainId}), block ${await client.getBlockNumber()}`);
+  console.log(`${net.label} (chain ${d.chainId}), block ${await client.getBlockNumber()}`);
 
   console.log('verifiers');
   for (const [scheme, address] of Object.entries(d.verifiers)) await show(scheme, address);
@@ -56,7 +56,7 @@ async function main(): Promise<void> {
     for (const [name, target] of Object.entries(CANARY_TARGET) as [string, CanaryTarget][]) {
       const [claimed, bounty] = await Promise.all([c.claimed(target), c.bounty(target)]);
       console.log(
-        `  ${name}: ${claimed ? 'CLAIMED' : 'open'}, bounty ${bounty.tokenAmount} token units + ${formatEther(bounty.ethAmount)} ETH`,
+        `  ${name}: ${claimed ? 'CLAIMED' : 'open'}, bounty ${bounty.tokenAmount} token units + ${formatEther(bounty.ethAmount)} ${symbol}`,
       );
     }
   }
@@ -68,11 +68,13 @@ async function main(): Promise<void> {
     const report = await scanExposure(client, account);
     console.log(`  EOA: nonce ${report.nonce}, exposed ${report.exposed}${report.delegatedTo ? `, delegated to ${report.delegatedTo}` : ''}`);
     if (report.publicKey) console.log(`  public key ${report.publicKey} (from ${report.exposingTx})`);
-    for (const b of report.balances) console.log(`  balance ${b.token}: ${b.amount}`);
+    for (const b of report.balances) {
+      console.log(`  balance ${b.token === zeroAddress ? symbol : b.token}: ${b.amount}`);
+    }
     return;
   }
   const root = await client
-    .readContract({ address: account, abi: kernelModuleAbi, functionName: 'rootValidator' })
+    .readContract({ address: account, abi: kernelAccountAbi, functionName: 'rootValidator' })
     .catch(() => undefined);
   console.log(`  Kernel root validation ${root ?? '(not a Kernel v3 account)'}`);
   if (d.quantumValidator) {
@@ -91,7 +93,7 @@ async function main(): Promise<void> {
       for (const a of status.assets) console.log(`    ${a.asset}: ${a.available} available`);
     }
   }
-  console.log(`  balance ${formatEther(await client.getBalance({ address: account }))} ETH`);
+  console.log(`  balance ${formatEther(await client.getBalance({ address: account }))} ${symbol}`);
 }
 
 main().catch((e: unknown) => {

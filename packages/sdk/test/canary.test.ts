@@ -103,6 +103,8 @@ describe('canary client', () => {
         claimMessage: () => `0x${'5a'.repeat(32)}`,
         bounty: () => encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [7n, 9n]),
         isDrill: () => word(1),
+        owedToken: () => word(11n),
+        owedEth: () => word(12n),
         targets: () => encodeFunctionResult({ abi: canaryRegistryAbi, functionName: 'targets', result: targets }),
       }),
     });
@@ -119,6 +121,7 @@ describe('canary client', () => {
     expect(await c.targets()).toEqual(targets);
     expect(await c.bounty(CANARY_TARGET.R1)).toEqual({ tokenAmount: 7n, ethAmount: 9n });
     expect(await c.isDrill()).toBe(true);
+    expect(await c.owed(DRILL_K1.address)).toEqual({ tokenAmount: 11n, ethAmount: 12n });
   });
 
   it('claim() encodes a signature proof and fundETH() sends value', async () => {
@@ -149,6 +152,7 @@ describe('canary client', () => {
     const c = canary(wallet, REGISTRY);
     await expect(c.claim(CANARY_TARGET.K1, { r: R, s: S, yParity: 0 })).resolves.toBe(TX);
     await expect(c.fundETH(CANARY_TARGET.L1, 123n)).resolves.toBe(TX);
+    await expect(c.withdrawOwed()).resolves.toBe(TX);
 
     const sent = rpc.calls
       .filter((x) => x.method === 'eth_sendRawTransaction')
@@ -159,6 +163,7 @@ describe('canary client', () => {
     const fund = decodeFunctionData({ abi: canaryRegistryAbi, data: sent[1]!.data! });
     expect(fund.args).toEqual([0]);
     expect(sent[1]!.value).toBe(123n);
+    expect(decodeFunctionData({ abi: canaryRegistryAbi, data: sent[2]!.data! }).functionName).toBe('withdrawOwed');
   });
 
   it('validates targets before reading', async () => {

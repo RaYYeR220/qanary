@@ -16,9 +16,9 @@ import {
   type Hex,
   type Transport,
 } from 'viem';
+import { KernelV3_3AccountAbi } from '@zerodev/sdk';
 import { readContract, writeContract } from 'viem/actions';
 import { hotTierExecutorAbi } from './abis/hotTierExecutor.js';
-import { kernelModuleAbi } from './abis/kernel.js';
 
 /** ERC-7579 module type id of executors. */
 export const MODULE_TYPE_EXECUTOR = 2;
@@ -87,7 +87,12 @@ function assertConfig(c: HotTierConfig): void {
     if (!isHex(selector) || size(selector) !== 4) throw new Error(`hot tier: allow selector must be 4 bytes`);
   }
   const s = c.signer;
-  if (s.family === 'secp256k1' ? !isAddress(s.eoa) || s.eoa === zeroAddress : !isHex(s.pubX) || !isHex(s.pubY)) {
+  const word = (x: Hex) => isHex(x, { strict: true }) && size(x) === 32;
+  if (
+    s.family === 'secp256k1'
+      ? !isAddress(s.eoa) || s.eoa === zeroAddress
+      : !word(s.pubX) || !word(s.pubY) || BigInt(s.pubX) === 0n
+  ) {
     throw new Error('hot tier: invalid hot signer');
   }
 }
@@ -143,7 +148,7 @@ export function installHotTierCall(account: Address, executor: Address, config: 
     to: account,
     value: 0n,
     data: encodeFunctionData({
-      abi: kernelModuleAbi,
+      abi: KernelV3_3AccountAbi,
       functionName: 'installModule',
       args: [BigInt(MODULE_TYPE_EXECUTOR), executor, hotTierInitData(config)],
     }),

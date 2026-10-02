@@ -23,7 +23,7 @@ import {
   hotTierExecutorAbi,
   hotTierInitData,
   installHotTierCall,
-  kernelModuleAbi,
+  kernelAccountAbi,
   type HotTierConfig,
 } from '../src/index.js';
 import { mockTransport, type RpcHandler } from './rpc.js';
@@ -65,7 +65,7 @@ describe('hot tier encodings', () => {
     const call = installHotTierCall(ACCOUNT, EXECUTOR, CONFIG);
     expect(call.to).toBe(ACCOUNT);
     expect(call.value).toBe(0n);
-    const decoded = decodeFunctionData({ abi: kernelModuleAbi, data: call.data });
+    const decoded = decodeFunctionData({ abi: kernelAccountAbi, data: call.data });
     expect(decoded.functionName).toBe('installModule');
     expect(decoded.args).toEqual([2n, EXECUTOR, vector.executorInitData]);
   });
@@ -88,6 +88,8 @@ describe('hot tier encodings', () => {
     ['zero registry', { registry: zeroAddress }, /registry/],
     ['zero hot EOA', { signer: { family: 'secp256k1' as const, eoa: zeroAddress } }, /hot signer/],
     ['3-byte selector', { allow: [{ target: USDC, selector: '0xa9059c' as Hex }] }, /4 bytes/],
+    ['P-256 key with pubX = 0', { signer: { family: 'p256' as const, pubX: `0x${'00'.repeat(32)}` as Hex, pubY: `0x${'bb'.repeat(32)}` as Hex } }, /hot signer/],
+    ['P-256 coordinate not 32 bytes', { signer: { family: 'p256' as const, pubX: '0x01' as Hex, pubY: `0x${'bb'.repeat(32)}` as Hex } }, /hot signer/],
   ])('rejects %s', (_name, patch, error) => {
     expect(() => hotTierInitData({ ...CONFIG, ...patch } as HotTierConfig)).toThrow(error);
   });

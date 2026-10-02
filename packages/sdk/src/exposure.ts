@@ -27,7 +27,7 @@ import {
   readContract,
 } from 'viem/actions';
 import { hashAuthorization, publicKeyToAddress } from 'viem/utils';
-import { ARBITRUM_ONE, ARBITRUM_ONE_TOKENS } from './deployments.js';
+import { nativeSymbol, networkByChainId } from './networks.js';
 
 /** EIP-7702 delegation designator prefix: an EOA's code is `0xef0100 ‖ delegate`. */
 export const DELEGATION_PREFIX: Hex = '0xef0100';
@@ -38,9 +38,12 @@ export function parseDelegation(code: Hex | undefined): Address | undefined {
   return getAddress(sliceHex(code, 3));
 }
 
-/** Default token list for `scanExposure`: USDC, USDG, WETH and ARB on Arbitrum One, none elsewhere. */
+/**
+ * Default token list for `scanExposure`: the network's `tokens` (USDC, USDG, WETH and ARB on
+ * Arbitrum One); empty for networks without a list and for unknown chains.
+ */
 export function defaultExposureTokens(chainId: number): Address[] {
-  return chainId === ARBITRUM_ONE ? Object.values(ARBITRUM_ONE_TOKENS) : [];
+  return Object.values(networkByChainId(chainId)?.tokens ?? {});
 }
 
 /** Recovery id of a transaction signature (legacy `v` 27/28 or EIP-155, else `yParity`). */
@@ -137,8 +140,9 @@ export async function publicKeyFromTransaction(tx: Transaction, address: Address
   }
   if (tx.type === 'eip7702') {
     for (const auth of tx.authorizationList) {
-      const { authority, publicKey } = await recoverAuthorizationPublicKey(auth);
-      if (isAddressEqual(authority, address)) return publicKey;
+      // An invalid authorization is skipped by the chain too; it exposes nobody.
+      const recovered = await recoverAuthorizationPublicKey(auth).catch(() => undefined);
+      if (recovered && isAddressEqual(recovered.authority, address)) return recovered.publicKey;
     }
   }
   return undefined;
@@ -257,7 +261,9 @@ export type ExposureReport = {
   /** Uncompressed secp256k1 public key (`0x04 ‖ x ‖ y`) recovered from `exposingTx`. */
   publicKey?: Hex;
   exposingTx?: Hash;
-  /** Native ETH (`token` = zero address) first, then each requested token. */
+  /** Symbol of the native currency (`APE` on ApeChain, `ETH` elsewhere). */
+  nativeSymbol: string;
+  /** Native currency (`token` = zero address) first, then each requested token. */
   balances: { token: Address; amount: bigint }[];
 };
 
@@ -272,7 +278,7 @@ export type ScanExposureOptions = Omit<FindExposingTransactionOptions, 'atBlock'
  * Quantum exposure of `address`: an EOA that has sent a transaction has revealed its secp256k1
  * public key, which a quantum adversary can turn into its private key. Reports code/delegation,
  * nonce, the exposing transaction and recovered public key (see `findExposingTransaction` for the
- * cost of locating it without `hintTx`), and the value at stake (ETH and token balances).
+ * cost of locating it without `hintTx`), and the value at stake (native and token balances).
  * All reads are pinned to the latest block at call time.
  */
 export async function scanExposure(
@@ -304,6 +310,7 @@ export async function scanExposure(
     isContract,
     nonce,
     exposed,
+    nativeSymbol: nativeSymbol(chainId),
     balances: [{ token: zeroAddress, amount: eth }, ...tokens.map((token, i) => ({ token, amount: tokenBalances[i]! }))],
   };
   if (delegatedTo) report.delegatedTo = delegatedTo;

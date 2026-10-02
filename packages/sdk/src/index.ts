@@ -15,9 +15,16 @@ export { verifyOnChain } from './verifier.js';
 export { keyStoreAbi } from './abis/keyStore.js';
 export { pqVerifierAbi } from './abis/pqVerifier.js';
 export {
-  ARBITRUM_ONE,
   ARBITRUM_ONE_TOKENS,
-  ARBITRUM_SEPOLIA,
+  NETWORKS,
+  explorerTxUrl,
+  nativeSymbol,
+  networkByChainId,
+  networkByName,
+  pimlicoPublicBundler,
+  type Network,
+} from './networks.js';
+export {
   CORE_CONTRACTS,
   ENTRY_POINT_V07,
   KERNEL_V3_3_ADDRESSES,
@@ -28,7 +35,7 @@ export {
   requireVerifier,
   type CoreContract,
   type Deployment,
-  type QanaryChainId,
+  type KernelAddresses,
 } from './deployments.js';
 export {
   KERNEL_VALIDATOR_SIG_PREFIX,
@@ -52,6 +59,12 @@ export {
   type KernelAccountClientBase,
   type KernelSmartAccount,
 } from './kernel.js';
+export {
+  SELF_BUNDLE_GAS,
+  selfBundleUserOperation,
+  userOperationOutcome,
+  type SelfBundleOptions,
+} from './selfBundle.js';
 export {
   ACCOUNT_KIND,
   HOT_FAMILY,
@@ -100,4 +113,4 @@ export { quantumValidatorAbi } from './abis/quantumValidator.js';
 export { hotTierExecutorAbi } from './abis/hotTierExecutor.js';
 export { canaryRegistryAbi } from './abis/canaryRegistry.js';
 export { drillRegistryFactoryAbi } from './abis/drillRegistryFactory.js';
-export { kernelModuleAbi } from './abis/kernel.js';
+export { KernelV3_3AccountAbi as kernelAccountAbi } from '@zerodev/sdk';

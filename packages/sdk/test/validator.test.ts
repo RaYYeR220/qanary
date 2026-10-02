@@ -102,8 +102,10 @@ describe('stubSignature', () => {
     const stub = await stubSignature(scheme);
     expect(size(stub)).toBe(SIGNATURE_BYTES[scheme]);
     expect(await stubSignature(scheme)).toBe(stub);
-    // high entropy: no long zero runs, as calldata/L1 pricing must see a realistic payload
-    expect(stub).not.toMatch(/0{64}/);
+    // a real signature's entropy (calldata / L1 pricing see a realistic payload); ML-DSA's hint
+    // section is mostly zero padding, so a few percent of zero bytes is expected
+    const zeros = hexToBytes(stub).filter((b) => b === 0).length;
+    expect(zeros / SIGNATURE_BYTES[scheme]).toBeLessThan(0.1);
   });
 
   it('never verifies against an account key', async () => {
@@ -131,6 +133,7 @@ describe('toQuantumValidator', () => {
     expect(v.address).toBe(VEC.validator);
     expect(v.getIdentifier()).toBe(VEC.validator);
     expect(v.validatorType).toBe('SECONDARY');
+    expect(v.supportedKernelVersions).toBe('0.3.3');
     expect(v.source).toBe('QuantumValidator');
     expect(v.keyPtr).toBe(keyPtr);
     expect(v.keyBlob).toBe(keyBlob(signer));

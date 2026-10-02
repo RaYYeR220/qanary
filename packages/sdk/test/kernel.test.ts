@@ -24,7 +24,7 @@ import {
   createQanaryAccount,
   encodeValidatorInstallData,
   hotTierInitData,
-  kernelModuleAbi,
+  kernelAccountAbi,
   kernelWrappedHash,
   keyBlob,
   parseDeployment,
@@ -156,9 +156,52 @@ describe('createQanaryAccount', () => {
     expect(calls).toHaveLength(2);
     expect(calls[0]).toEqual({ to: REGISTRY, value: 1n, data: '0x' });
     expect(calls[1]!.to).toBe(ACCOUNT);
-    const install = decodeFunctionData({ abi: kernelModuleAbi, data: calls[1]!.data });
+    const install = decodeFunctionData({ abi: kernelAccountAbi, data: calls[1]!.data });
     expect(install.functionName).toBe('installModule');
     expect(install.args).toEqual([2n, EXECUTOR, vector.executorInitData]);
+  });
+
+  it('does not arm the hot-tier install for an already deployed account (no silent reinstall)', async () => {
+    // e.g. the owner uninstalled the executor after a hot-key leak: isModuleInstalled is false again
+    const { client } = chain({ deployed: true });
+    const account = await createQanaryAccount(client, { signer, registry: REGISTRY, deployment, hot: HOT });
+    const calls = decodeExecute(await account.encodeCalls([{ to: REGISTRY, value: 1n, data: '0x' }]));
+    expect(calls).toEqual([{ to: REGISTRY, value: 1n, data: '0x' }]);
+  });
+
+  it('installHotTier: true installs on a deployed account; false never installs', async () => {
+    const deployed = chain({ deployed: true });
+    const explicit = await createQanaryAccount(deployed.client, {
+      signer,
+      registry: REGISTRY,
+      deployment,
+      hot: HOT,
+      installHotTier: true,
+    });
+    const calls = decodeExecute(await explicit.encodeCalls([{ to: REGISTRY, value: 1n, data: '0x' }]));
+    expect(calls).toHaveLength(2);
+    expect(decodeFunctionData({ abi: kernelAccountAbi, data: calls[1]!.data }).args).toEqual([
+      2n,
+      EXECUTOR,
+      vector.executorInitData,
+    ]);
+
+    const fresh = chain();
+    const never = await createQanaryAccount(fresh.client, {
+      signer,
+      registry: REGISTRY,
+      deployment,
+      hot: HOT,
+      installHotTier: false,
+    });
+    expect(decodeExecute(await never.encodeCalls([{ to: REGISTRY, value: 1n, data: '0x' }]))).toHaveLength(1);
+  });
+
+  it('rejects a deployment for another chain', async () => {
+    const { client } = chain();
+    await expect(
+      createQanaryAccount(client, { signer, registry: REGISTRY, deployment: { ...deployment, chainId: 33111, network: 'apechain-curtis' } }),
+    ).rejects.toThrow('deployment is for chain 33111 (apechain-curtis) but the client is on chain 421614');
   });
 
   it("hotInstall: 'initCode' installs the hot tier through Kernel initConfig", async () => {
@@ -172,7 +215,7 @@ describe('createQanaryAccount', () => {
     });
     const { initConfig } = decodeInitCode((await account.getFactoryArgs()).factoryData!);
     expect(initConfig).toHaveLength(1);
-    const install = decodeFunctionData({ abi: kernelModuleAbi, data: initConfig[0]! });
+    const install = decodeFunctionData({ abi: kernelAccountAbi, data: initConfig[0]! });
     expect(install.args).toEqual([2n, EXECUTOR, hotTierInitData({ ...HOT, registry: REGISTRY })]);
     // and no extra call in the first user operation
     expect(decodeExecute(await account.encodeCalls([{ to: REGISTRY, value: 1n, data: '0x' }]))).toHaveLength(1);

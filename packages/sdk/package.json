@@ -23,7 +23,7 @@
     "test": "vitest run",
     "gen:abis": "tsx scripts/gen-abis.ts",
     "gen:deployments": "tsx scripts/gen-deployments.ts",
-    "e2e:sepolia": "tsx scripts/e2e-sepolia.ts",
+    "e2e": "tsx scripts/e2e.ts",
     "status": "tsx scripts/status.ts"
   },
   "dependencies": {

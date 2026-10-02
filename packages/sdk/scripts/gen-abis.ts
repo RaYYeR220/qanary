@@ -2,9 +2,6 @@
  * Rewrites `src/abis/*.ts` from the forge artifacts in `contracts/evm/out`.
  *
  *   cd contracts/evm && forge build && cd ../../packages/sdk && npx tsx scripts/gen-abis.ts
- *
- * Contracts marked optional are skipped while their artifact does not exist yet; their
- * hand-written ABI file stays in place until the contract lands and this script is re-run.
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -14,7 +11,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const ARTIFACTS = resolve(here, '../../../contracts/evm/out');
 const DEST = resolve(here, '../src/abis');
 
-type Target = { contract: string; file: string; constName: string; description: string; optional?: boolean };
+type Target = { contract: string; file: string; constName: string; description: string };
 
 const TARGETS: Target[] = [
   { contract: 'KeyStore', file: 'keyStore', constName: 'keyStoreAbi', description: 'content-addressed KeyStore' },
@@ -29,21 +26,18 @@ const TARGETS: Target[] = [
     file: 'hotTierExecutor',
     constName: 'hotTierExecutorAbi',
     description: 'HotTierExecutor ERC-7579 executor module',
-    optional: true,
   },
   {
     contract: 'QuantumCanaryRegistry',
     file: 'canaryRegistry',
     constName: 'canaryRegistryAbi',
     description: 'QuantumCanaryRegistry',
-    optional: true,
   },
   {
     contract: 'DrillRegistryFactory',
     file: 'drillRegistryFactory',
     constName: 'drillRegistryFactoryAbi',
     description: 'DrillRegistryFactory',
-    optional: true,
   },
 ];
 
@@ -65,10 +59,6 @@ let written = 0;
 for (const t of TARGETS) {
   const artifact = resolve(ARTIFACTS, `${t.contract}.sol`, `${t.contract}.json`);
   if (!existsSync(artifact)) {
-    if (t.optional) {
-      console.log(`skip ${t.contract}: no artifact (keeping src/abis/${t.file}.ts)`);
-      continue;
-    }
     throw new Error(`missing artifact ${artifact}; run \`forge build\` in contracts/evm first`);
   }
   const abi = stripInternalTypes((JSON.parse(readFileSync(artifact, 'utf8')) as { abi: AbiItem[] }).abi).filter(

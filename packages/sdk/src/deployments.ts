@@ -1,30 +1,19 @@
 import { getAddress, isAddress, type Address } from 'viem';
 import { deploymentFiles } from './deployments.data.js';
+import { NETWORKS, networkByChainId } from './networks.js';
 import type { Scheme } from './schemes.js';
-
-/** Chains with Qanary deployments: Arbitrum One and Arbitrum Sepolia. */
-export type QanaryChainId = 42161 | 421614;
-
-export const ARBITRUM_ONE = 42161 as const;
-export const ARBITRUM_SEPOLIA = 421614 as const;
 
 /** ERC-4337 EntryPoint v0.7 (same address on every chain). */
 export const ENTRY_POINT_V07: Address = '0x0000000071727De22E5E9d8BAf0edAc6f37da032';
 
-/** Kernel v3.3 infrastructure (same addresses on Arbitrum One and Arbitrum Sepolia). */
+/** Kernel v3.3 infrastructure at its canonical (CREATE2) addresses; the default on every chain. */
 export const KERNEL_V3_3_ADDRESSES = {
   implementation: '0xd6CEDDe84be40893d153Be9d467CD6aD37875b28',
   factory: '0x2577507b78c2008Ff367261CB6285d44ba5eF2E9',
   metaFactory: '0xd703aaE79538628d27099B8c4f621bE4CCd142d5',
 } as const satisfies Record<string, Address>;
 
-/** Tokens the exposure scanner reads by default on Arbitrum One. */
-export const ARBITRUM_ONE_TOKENS = {
-  usdc: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
-  usdg: '0x004B506865409877C9fA29bfb1ebA929984B9bbC',
-  weth: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
-  arb: '0x912CE59144191C1204E64559FE8253a0e49E6548',
-} as const satisfies Record<string, Address>;
+export type KernelAddresses = { implementation: Address; factory: Address; metaFactory: Address };
 
 /** Contracts of the Qanary core deployment (`evm` section of `deployments/<network>.json`). */
 export const CORE_CONTRACTS = [
@@ -43,22 +32,20 @@ export type CoreContract = (typeof CORE_CONTRACTS)[number];
  * `requireContract` to get an address or a descriptive error.
  */
 export type Deployment = {
-  chainId: QanaryChainId;
-  network: 'arbitrum-one' | 'arbitrum-sepolia';
+  chainId: number;
+  /** Network slug (`arbitrum-one`, `apechain`, …), also the deployment file name. */
+  network: string;
+  nativeSymbol: string;
   entryPoint: Address;
-  kernel: typeof KERNEL_V3_3_ADDRESSES;
+  kernel: KernelAddresses;
   /** ERC-7913 verifier per post-quantum scheme (Stylus programs). */
   verifiers: Partial<Record<Scheme, Address>>;
   ladderVerifier?: Address;
-  tokens: Partial<Record<keyof typeof ARBITRUM_ONE_TOKENS, Address>>;
+  /** Tokens read by default by the exposure scanner. */
+  tokens: Record<string, Address>;
   /** Transaction hashes and addresses recorded by end-to-end runs, as written to the JSON. */
   e2e: Record<string, unknown>;
 } & { [K in CoreContract]?: Address };
-
-const NETWORKS: Record<QanaryChainId, Deployment['network']> = {
-  42161: 'arbitrum-one',
-  421614: 'arbitrum-sepolia',
-};
 
 const STYLUS_VERIFIERS: Record<Scheme, string> = {
   mldsa44: 'mldsa44Verifier',
@@ -84,26 +71,37 @@ function stylusAddress(value: unknown, where: string): Address | undefined {
 }
 
 /**
- * Builds a `Deployment` from the contents of `deployments/<network>.json` (or `null`/`undefined`
- * when the file does not exist yet: only the shared infrastructure addresses are filled in).
- * Unknown keys are ignored; a malformed address or a mismatching `chainId` throws.
+ * Builds a `Deployment` for `chainId` from the contents of `deployments/<network>.json`, or from
+ * `null`/`undefined` when the file does not exist yet (only the shared infrastructure is filled
+ * in). Known networks take their name, native currency and tokens from `NETWORKS`; other chains
+ * get `chain-<id>`, ETH and no tokens. The file may override `entryPoint` and `kernel`
+ * (`implementation`, `factory`, `metaFactory`). Unknown keys are ignored; a malformed address or a
+ * mismatching `chainId` throws.
  */
-export function parseDeployment(chainId: QanaryChainId, json: unknown): Deployment {
-  const network = NETWORKS[chainId];
-  if (!network) throw new Error(`deployments: unsupported chain ${chainId}`);
+export function parseDeployment(chainId: number, json: unknown): Deployment {
+  if (!Number.isSafeInteger(chainId) || chainId <= 0) throw new Error(`deployments: invalid chain id ${chainId}`);
+  const known = networkByChainId(chainId);
+  const network = known?.name ?? `chain-${chainId}`;
   const d: Deployment = {
     chainId,
     network,
+    nativeSymbol: known?.nativeSymbol ?? 'ETH',
     entryPoint: ENTRY_POINT_V07,
-    kernel: KERNEL_V3_3_ADDRESSES,
+    kernel: { ...KERNEL_V3_3_ADDRESSES },
     verifiers: {},
-    tokens: chainId === ARBITRUM_ONE ? { ...ARBITRUM_ONE_TOKENS } : {},
+    tokens: { ...(known?.tokens ?? {}) },
     e2e: {},
   };
   if (json === undefined || json === null) return d;
   if (!isRecord(json)) throw new Error(`deployments: ${network}.json must be a JSON object`);
   if (json.chainId !== undefined && Number(json.chainId) !== chainId) {
     throw new Error(`deployments: ${network}.json has chainId ${String(json.chainId)}, expected ${chainId}`);
+  }
+
+  d.entryPoint = optionalAddress(json.entryPoint, `${network}.entryPoint`) ?? d.entryPoint;
+  const kernel = isRecord(json.kernel) ? json.kernel : {};
+  for (const key of ['implementation', 'factory', 'metaFactory'] as const) {
+    d.kernel[key] = optionalAddress(kernel[key], `${network}.kernel.${key}`) ?? d.kernel[key];
   }
 
   const stylus = isRecord(json.stylus) ? json.stylus : {};
@@ -123,19 +121,23 @@ export function parseDeployment(chainId: QanaryChainId, json: unknown): Deployme
 }
 
 /**
- * Qanary deployments by chain id, built from the repository's `deployments/*.json` at build time
- * (`scripts/gen-deployments.ts`). Networks without a deployment file only carry the shared
- * infrastructure (EntryPoint, Kernel) and tokens.
+ * Qanary deployments by chain id: one entry per known network (`NETWORKS`), built from the
+ * repository's `deployments/<network>.json` at build time (`scripts/gen-deployments.ts`).
+ * Networks without a deployment file only carry the shared infrastructure (EntryPoint, Kernel).
  */
-export const deployments: Record<QanaryChainId, Deployment> = {
-  42161: parseDeployment(ARBITRUM_ONE, deploymentFiles[ARBITRUM_ONE]),
-  421614: parseDeployment(ARBITRUM_SEPOLIA, deploymentFiles[ARBITRUM_SEPOLIA]),
-};
+export const deployments: Record<number, Deployment> = Object.fromEntries(
+  Object.values(NETWORKS).map((n) => [n.chainId, parseDeployment(n.chainId, deploymentFiles[n.name])]),
+);
 
-/** The deployment for `chainId`; throws for chains Qanary is not deployed on. */
+/** The deployment for `chainId`; throws for chains Qanary has no network entry for. */
 export function getDeployment(chainId: number): Deployment {
-  const d = deployments[chainId as QanaryChainId];
-  if (!d) throw new Error(`no Qanary deployment for chain ${chainId} (supported: 42161, 421614)`);
+  const d = deployments[chainId];
+  if (!d) {
+    const known = Object.values(NETWORKS)
+      .map((n) => `${n.chainId} ${n.name}`)
+      .join(', ');
+    throw new Error(`no Qanary deployment for chain ${chainId} (known: ${known})`);
+  }
   return d;
 }
 

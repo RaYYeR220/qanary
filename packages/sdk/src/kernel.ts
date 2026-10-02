@@ -1,9 +1,8 @@
-import { createKernelAccount, type CreateKernelAccountReturnType } from '@zerodev/sdk';
+import { createKernelAccount, KernelV3_3AccountAbi, type CreateKernelAccountReturnType } from '@zerodev/sdk';
 import { KERNEL_V3_3 } from '@zerodev/sdk/constants';
 import { encodeFunctionData, type Address, type Hex } from 'viem';
 import { entryPoint07Address } from 'viem/account-abstraction';
-import { getChainId } from 'viem/actions';
-import { kernelModuleAbi } from './abis/kernel.js';
+import { getChainId, getCode } from 'viem/actions';
 import { getDeployment, requireContract, requireVerifier, type Deployment } from './deployments.js';
 import { hotTierInitData, MODULE_TYPE_EXECUTOR, type HotSetup } from './hotTier.js';
 import type { PqSigner } from './schemes.js';
@@ -32,15 +31,24 @@ export type CreateQanaryAccountOptions = {
   index?: bigint;
   /**
    * Where the hot tier is installed:
-   * - `'userOp'` (default): `installModule(2, executor, …)` is appended to the account's first user
-   *   operation (execution phase). Required with ERC-7562 bundlers: the executor's `onInstall`
-   *   reads `block.timestamp` and writes storage not associated with the account, both forbidden
-   *   while `initCode` runs.
+   * - `'userOp'` (default): `installModule(2, executor, …)` is appended to the next user operation
+   *   (execution phase) — see `installHotTier` for when. Required with ERC-7562 bundlers: the
+   *   executor's `onInstall` reads `block.timestamp` and writes storage not associated with the
+   *   account, both forbidden while `initCode` runs.
    * - `'initCode'`: installed by `Kernel.initialize` through `initConfig`, so the account is born
    *   with it. Only for self-bundled `handleOps`; the hot setup then also changes the address.
    */
   hotInstall?: 'userOp' | 'initCode';
-  /** Contract addresses; default: the deployment for the client's chain. */
+  /**
+   * With `hotInstall: 'userOp'`, whether this account object appends the hot-tier install to its
+   * user operations (only while the executor is not installed). Default: only if the account is
+   * not deployed yet when the object is created, i.e. the install rides on the deploying user
+   * operation. For a deployed account the hot setup is ignored unless this is `true`, so an
+   * executor the owner uninstalled (e.g. after a hot-key leak) is never silently reinstalled with
+   * a stale setup by a later session.
+   */
+  installHotTier?: boolean;
+  /** Contract addresses; default: the deployment for the client's chain. Must match that chain. */
   deployment?: Deployment;
   /** Known account address; skips the EntryPoint `getSenderAddress` lookup. */
   address?: Address;
@@ -60,43 +68,59 @@ export async function createQanaryAccount(
 ): Promise<KernelSmartAccount> {
   const chainId = client.chain?.id ?? (await getChainId(client));
   const d = opts.deployment ?? getDeployment(chainId);
+  if (d.chainId !== chainId) {
+    throw new Error(`deployment is for chain ${d.chainId} (${d.network}) but the client is on chain ${chainId}`);
+  }
+  const entryPoint = { address: d.entryPoint, version: '0.7' } as const;
   const validator = await toQuantumValidator(client, {
     signer: opts.signer,
-    entryPoint: QANARY_ENTRY_POINT,
+    entryPoint,
     kernelVersion: QANARY_KERNEL_VERSION,
     validatorAddress: requireContract(d, 'quantumValidator'),
     verifier: requireVerifier(d, opts.signer.scheme),
     keyStore: requireContract(d, 'keyStore'),
   });
 
-  let pluginMigrations: { type: number; address: Address; data: Hex }[] | undefined;
+  let hotInitData: Hex | undefined;
+  let executor: Address | undefined;
   let initConfig: Hex[] | undefined;
   if (opts.hot) {
-    const executor = requireContract(d, 'hotTierExecutor');
-    const data = hotTierInitData({ ...opts.hot, registry: opts.registry });
+    executor = requireContract(d, 'hotTierExecutor');
+    hotInitData = hotTierInitData({ ...opts.hot, registry: opts.registry });
     if (opts.hotInstall === 'initCode') {
       initConfig = [
         encodeFunctionData({
-          abi: kernelModuleAbi,
+          abi: KernelV3_3AccountAbi,
           functionName: 'installModule',
-          args: [BigInt(MODULE_TYPE_EXECUTOR), executor, data],
+          args: [BigInt(MODULE_TYPE_EXECUTOR), executor, hotInitData],
         }),
       ];
-    } else {
-      pluginMigrations = [{ type: MODULE_TYPE_EXECUTOR, address: executor, data }];
     }
   }
 
-  return createKernelAccount(client, {
-    plugins: { sudo: validator },
-    entryPoint: QANARY_ENTRY_POINT,
-    kernelVersion: QANARY_KERNEL_VERSION,
-    accountImplementationAddress: d.kernel.implementation,
-    factoryAddress: d.kernel.factory,
-    metaFactoryAddress: d.kernel.metaFactory,
-    index: opts.index ?? 0n,
-    address: opts.address,
-    initConfig,
-    pluginMigrations,
-  });
+  const create = (address: Address | undefined, migrate: boolean) =>
+    createKernelAccount(client, {
+      plugins: { sudo: validator },
+      entryPoint,
+      kernelVersion: QANARY_KERNEL_VERSION,
+      accountImplementationAddress: d.kernel.implementation,
+      factoryAddress: d.kernel.factory,
+      metaFactoryAddress: d.kernel.metaFactory,
+      index: opts.index ?? 0n,
+      address,
+      initConfig,
+      // ZeroDev appends `installModule` for pending migrations to every user operation until
+      // `isModuleInstalled` reports the module, so it is only armed when installing is intended.
+      pluginMigrations:
+        migrate && executor && hotInitData ? [{ type: MODULE_TYPE_EXECUTOR, address: executor, data: hotInitData }] : undefined,
+    });
+
+  const account = await create(opts.address, false);
+  if (!hotInitData || opts.hotInstall === 'initCode' || opts.installHotTier === false) return account;
+  let migrate = opts.installHotTier === true;
+  if (!migrate) {
+    const code = await getCode(client, { address: account.address });
+    migrate = !code || code === '0x';
+  }
+  return migrate ? create(account.address, true) : account;
 }

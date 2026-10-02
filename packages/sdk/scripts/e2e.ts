@@ -1,24 +1,30 @@
 /**
- * End-to-end run on Arbitrum Sepolia through a production ERC-4337 bundler.
+ * End-to-end run of a Qanary account on one network.
  *
- *   DEPLOYER_PRIVATE_KEY=0x… npx tsx scripts/e2e-sepolia.ts
+ *   DEPLOYER_PRIVATE_KEY=0x… npx tsx scripts/e2e.ts --network <arbitrum-one|apechain|apechain-curtis|arbitrum-sepolia>
+ *                                                  [--bundler pimlico|zerodev|self]
  *
  * 1. ML-DSA-44 key from a BIP-39 mnemonic → KeyStore.
  * 2. Drill canary registry (published drill keys) from the DrillRegistryFactory.
  * 3. Kernel v3.3 account with the QuantumValidator as root, deployed by its first user operation
- *    (initCode) and sent through the bundler: the bundler's ERC-7562 validation accepts it. The
- *    same operation installs the hot tier (capped ETH spending by a classical hot key).
+ *    (initCode), which also installs the hot tier (capped native-currency spending by a classical
+ *    hot key). Through a bundler, its ERC-7562 validation accepts the operation.
  * 4. Hot transfer within the cap → succeeds; over the cap → reverts on-chain (CapExceeded).
  * 5. Drill trip: K1 claim with the published drill key marks secp256k1 broken.
  * 6. Hot transfer after the trip → reverts on-chain (ClassicalFamilyBroken).
  * 7. With QANARY_KMS_KEY_ID: the same account flow with an AWS KMS ML-DSA-44 root key.
  *
- * Transaction hashes are written to deployments/arbitrum-sepolia.json under `e2e.sdk`.
+ * Bundler (default, in order): BUNDLER_URL (Pimlico-compatible) → ZeroDev when ZERODEV_PROJECT_ID
+ * is set → Pimlico's public endpoint where it serves the chain (Arbitrum One / Sepolia; not
+ * ApeChain) → self-bundled `EntryPoint.handleOps` sent by the deployer. `--bundler` forces one.
  *
- * Env: DEPLOYER_PRIVATE_KEY (pays gas and funds the accounts), ARB_SEPOLIA_RPC,
- * QANARY_MNEMONIC (default: a fresh one, printed), HOT_PRIVATE_KEY (default: fresh),
- * ZERODEV_PROJECT_ID (use the ZeroDev bundler instead of Pimlico's public endpoint), BUNDLER_URL,
- * QANARY_KMS_KEY_ID + AWS_REGION, E2E_ACCOUNT_FUNDING (ETH per account, default 0.003).
+ * Transaction hashes are written to deployments/<network>.json under `e2e.sdk`. The mnemonic and
+ * hot key come from QANARY_MNEMONIC / HOT_PRIVATE_KEY or `.secrets/e2e-<network>.env`, where new
+ * ones are created; they are never printed.
+ *
+ * Env: DEPLOYER_PRIVATE_KEY (pays gas and funds the accounts), <NETWORK>_RPC (ARB_ONE_RPC,
+ * APECHAIN_RPC, APECHAIN_CURTIS_RPC, ARB_SEPOLIA_RPC), QANARY_KMS_KEY_ID + AWS_REGION,
+ * E2E_ACCOUNT_FUNDING (native units per account; default 20M gas at the current gas price).
  */
 import { createKernelAccountClient } from '@zerodev/sdk';
 import {
@@ -36,7 +42,6 @@ import {
   type PublicClient,
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { arbitrumSepolia } from 'viem/chains';
 import {
   CANARY_TARGET,
   CLASSICAL_FAMILY,
@@ -45,29 +50,45 @@ import {
   createQanaryAccount,
   drillK1PrivateKey,
   drillRegistryFactoryAbi,
+  explorerTxUrl,
   generateMnemonic,
   hotTier,
   hotTierExecutorAbi,
   keyBlob,
   kmsSigner,
+  pimlicoPublicBundler,
   pqSignerFromMnemonic,
   quantumValidatorAbi,
   requireContract,
   requireVerifier,
+  selfBundleUserOperation,
   storeKey,
+  userOperationOutcome,
   type KernelSmartAccount,
   type PqSigner,
 } from '../src/index.js';
-import { bundlerGasPrice, deploymentPath, fail, readDeploymentFile, recordE2E, requireEnv, rpcUrl } from './lib.js';
+import {
+  bundlerGasPrice,
+  chainFor,
+  deploymentPath,
+  fail,
+  flag,
+  readDeploymentFile,
+  recordE2E,
+  requireEnv,
+  resolveNetwork,
+  rpcUrl,
+  secret,
+} from './lib.js';
 
-const NETWORK = 'arbitrum-sepolia';
+const net = resolveNetwork(flag('network'));
+const chain = chainFor(net);
+const symbol = net.nativeSymbol;
 const HOT_CAP = parseEther('0.00002');
 const HOT_WINDOW = 3600;
 
-const loaded = readDeploymentFile(NETWORK);
-if (!loaded) {
-  fail(`${deploymentPath(NETWORK)} not found: deploy the contracts to Arbitrum Sepolia first (docs/DEPLOYING.md)`);
-}
+const loaded = readDeploymentFile(net);
+if (!loaded) fail(`${deploymentPath(net)} not found: deploy the contracts to ${net.label} first (docs/DEPLOYING.md)`);
 const d = loaded.deployment;
 let keyStore: Address, executor: Address, drillFactory: Address, validatorAddress: Address;
 try {
@@ -80,29 +101,48 @@ try {
   fail((e as Error).message);
 }
 
-const publicClient = createPublicClient({ chain: arbitrumSepolia, transport: http(rpcUrl(NETWORK)) }) as PublicClient;
+type Bundler = { kind: 'pimlico' | 'zerodev'; url: string } | { kind: 'self' };
+
+function chooseBundler(): Bundler {
+  const forced = flag('bundler');
+  const zerodevUrl = (id: string) => `https://rpc.zerodev.app/api/v3/${id}/chain/${net.chainId}`;
+  switch (forced) {
+    case 'self':
+      return { kind: 'self' };
+    case 'zerodev':
+      return { kind: 'zerodev', url: zerodevUrl(requireEnv('ZERODEV_PROJECT_ID')) };
+    case 'pimlico': {
+      const url = process.env.BUNDLER_URL ?? pimlicoPublicBundler(net.chainId);
+      return url ? { kind: 'pimlico', url } : fail(`Pimlico's public bundler does not serve ${net.label}; set BUNDLER_URL`);
+    }
+    case undefined:
+      break;
+    default:
+      fail(`unknown --bundler ${forced} (pimlico | zerodev | self)`);
+  }
+  if (process.env.BUNDLER_URL) return { kind: 'pimlico', url: process.env.BUNDLER_URL };
+  if (process.env.ZERODEV_PROJECT_ID) return { kind: 'zerodev', url: zerodevUrl(process.env.ZERODEV_PROJECT_ID) };
+  const pimlico = pimlicoPublicBundler(net.chainId);
+  return pimlico ? { kind: 'pimlico', url: pimlico } : { kind: 'self' };
+}
+const bundler = chooseBundler();
+
+const publicClient = createPublicClient({ chain, transport: http(rpcUrl(net)) }) as PublicClient;
 const deployer = createWalletClient({
   account: privateKeyToAccount(requireEnv('DEPLOYER_PRIVATE_KEY') as `0x${string}`),
-  chain: arbitrumSepolia,
-  transport: http(rpcUrl(NETWORK)),
+  chain,
+  transport: http(rpcUrl(net)),
 });
-const funding = parseEther(process.env.E2E_ACCOUNT_FUNDING ?? '0.003');
+const secretsFile = `e2e-${net.name}.env`;
 
-const zerodev = process.env.ZERODEV_PROJECT_ID;
-const bundlerKind = zerodev ? 'zerodev' : 'pimlico';
-const bundlerUrl =
-  process.env.BUNDLER_URL ??
-  (zerodev
-    ? `https://rpc.zerodev.app/api/v3/${zerodev}/chain/${arbitrumSepolia.id}`
-    : `https://public.pimlico.io/v2/${arbitrumSepolia.id}/rpc`);
-
-const record = (values: Record<string, unknown>) => recordE2E(NETWORK, 'sdk', values);
-const explorer = (hash: Hash) => `https://sepolia.arbiscan.io/tx/${hash}`;
+const record = (values: Record<string, unknown>) => recordE2E(net, 'sdk', values);
+const link = (hash: Hash) => explorerTxUrl(net.chainId, hash) ?? hash;
+const amount = (wei: bigint) => `${formatEther(wei)} ${symbol}`;
 
 async function waitOk(hash: Hash, what: string): Promise<Hash> {
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
-  if (receipt.status !== 'success') fail(`${what} reverted: ${explorer(hash)}`);
-  console.log(`  ${what}: ${explorer(hash)}`);
+  if (receipt.status !== 'success') fail(`${what} reverted: ${link(hash)}`);
+  console.log(`  ${what}: ${link(hash)}`);
   return hash;
 }
 
@@ -110,12 +150,12 @@ async function waitOk(hash: Hash, what: string): Promise<Hash> {
 async function landRevert(send: () => Promise<Hash>, what: string): Promise<Hash> {
   const hash = await send();
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
-  if (receipt.status !== 'reverted') fail(`${what} was expected to revert but succeeded: ${explorer(hash)}`);
-  console.log(`  ${what} (reverted as expected): ${explorer(hash)}`);
+  if (receipt.status !== 'reverted') fail(`${what} was expected to revert but succeeded: ${link(hash)}`);
+  console.log(`  ${what} (reverted as expected): ${link(hash)}`);
   return hash;
 }
 
-/** Simulates a hot-tier call and returns the custom error name it reverts with. */
+/** Simulates a hot-tier call and returns the custom error it reverts with (`none` if it succeeds). */
 async function expectedHotError(from: Address, account: Address, value: bigint): Promise<string> {
   try {
     await publicClient.simulateContract({
@@ -136,29 +176,33 @@ async function expectedHotError(from: Address, account: Address, value: bigint):
 }
 
 async function fund(to: Address, value: bigint, what: string): Promise<void> {
-  const hash = await deployer.sendTransaction({ to, value });
-  await waitOk(hash, `fund ${what} with ${formatEther(value)} ETH`);
+  await waitOk(await deployer.sendTransaction({ to, value }), `fund ${what} with ${amount(value)}`);
 }
 
-function kernelClient(account: KernelSmartAccount) {
-  return createKernelAccountClient({
-    account,
-    chain: arbitrumSepolia,
-    bundlerTransport: http(bundlerUrl),
-    client: publicClient,
-    userOperation: { estimateFeesPerGas: () => bundlerGasPrice(bundlerUrl, bundlerKind) },
-  });
-}
-
-/** Sends one PQ-signed user operation and waits for its bundle transaction. */
+/** Sends one PQ-signed user operation (bundler or self-bundled) and waits for its transaction. */
 async function sendPqUserOp(account: KernelSmartAccount, what: string): Promise<{ userOpHash: Hash; tx: Hash }> {
-  const client = kernelClient(account);
-  const userOpHash = await client.sendUserOperation({
-    calls: [{ to: deployer.account.address, value: 1n, data: '0x' }],
+  const calls = [{ to: deployer.account.address, value: 1n, data: '0x' as const }];
+  if (bundler.kind === 'self') {
+    const { userOpHash, hash } = await selfBundleUserOperation(deployer, account, { calls });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== 'success' || userOperationOutcome(receipt, userOpHash) !== true) {
+      fail(`${what} user operation ${userOpHash} failed: ${link(hash)}`);
+    }
+    console.log(`  ${what} (self-bundled): userOp ${userOpHash} in ${link(hash)}`);
+    return { userOpHash, tx: hash };
+  }
+  const { kind, url } = bundler;
+  const client = createKernelAccountClient({
+    account,
+    chain,
+    bundlerTransport: http(url),
+    client: publicClient,
+    userOperation: { estimateFeesPerGas: () => bundlerGasPrice(url, kind) },
   });
+  const userOpHash = await client.sendUserOperation({ calls });
   const receipt = await client.waitForUserOperationReceipt({ hash: userOpHash, timeout: 180_000 });
-  if (!receipt.success) fail(`${what} user operation ${userOpHash} failed: ${explorer(receipt.receipt.transactionHash)}`);
-  console.log(`  ${what}: userOp ${userOpHash} in ${explorer(receipt.receipt.transactionHash)}`);
+  if (!receipt.success) fail(`${what} user operation ${userOpHash} failed: ${link(receipt.receipt.transactionHash)}`);
+  console.log(`  ${what} (${kind} bundler): userOp ${userOpHash} in ${link(receipt.receipt.transactionHash)}`);
   return { userOpHash, tx: receipt.receipt.transactionHash };
 }
 
@@ -168,34 +212,33 @@ async function prepareRoot(signer: PqSigner, label: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  console.log(`bundler: ${bundlerKind} (${zerodev ? 'ZeroDev project' : bundlerUrl})`);
+  console.log(`${net.label} (chain ${net.chainId}), bundler: ${bundler.kind === 'self' ? 'self-bundled handleOps' : bundler.kind}`);
   console.log(`deployer: ${deployer.account.address}`);
+  const gasPrice = await publicClient.getGasPrice();
+  const funding = process.env.E2E_ACCOUNT_FUNDING
+    ? parseEther(process.env.E2E_ACCOUNT_FUNDING)
+    : gasPrice * 20_000_000n + 2n * HOT_CAP;
 
   // 1. post-quantum root key
-  let mnemonic = process.env.QANARY_MNEMONIC;
-  if (!mnemonic) {
-    mnemonic = generateMnemonic();
-    console.log(`fresh testnet mnemonic (set QANARY_MNEMONIC to reuse): ${mnemonic}`);
-  }
-  const signer = pqSignerFromMnemonic('mldsa44', mnemonic);
+  const signer = pqSignerFromMnemonic('mldsa44', secret(secretsFile, 'QANARY_MNEMONIC', generateMnemonic));
   await prepareRoot(signer, 'ML-DSA-44');
 
   // 2. drill registry
   const createHash = await deployer.writeContract({ address: drillFactory, abi: drillRegistryFactoryAbi, functionName: 'create' });
   const createReceipt = await publicClient.waitForTransactionReceipt({ hash: createHash });
   const [created] = parseEventLogs({ abi: drillRegistryFactoryAbi, eventName: 'DrillCreated', logs: createReceipt.logs });
-  if (!created) fail(`DrillRegistryFactory.create emitted no DrillCreated: ${explorer(createHash)}`);
+  if (!created) fail(`DrillRegistryFactory.create emitted no DrillCreated: ${link(createHash)}`);
   const drill = created.args.registry;
   const drillReader = canary(publicClient, drill);
   const drillKey = privateKeyToAccount(drillK1PrivateKey());
   if (!(await drillReader.isDrill()) || (await drillReader.targets()).k1 !== drillKey.address) {
     fail(`registry ${drill} is not a drill registry over the published drill keys`);
   }
-  console.log(`  drill registry ${drill}: ${explorer(createHash)}`);
-  record({ drillRegistry: drill, drillRegistryTx: createHash, bundler: bundlerKind });
+  console.log(`  drill registry ${drill}: ${link(createHash)}`);
+  record({ drillRegistry: drill, drillRegistryTx: createHash, bundler: bundler.kind });
 
   // 3. account with PQ root + hot tier, deployed by its first user operation
-  const hotKey = privateKeyToAccount((process.env.HOT_PRIVATE_KEY as `0x${string}` | undefined) ?? generatePrivateKey());
+  const hotKey = privateKeyToAccount(secret(secretsFile, 'HOT_PRIVATE_KEY', generatePrivateKey) as `0x${string}`);
   const account = await createQanaryAccount(publicClient, {
     signer,
     registry: drill,
@@ -227,13 +270,13 @@ async function main(): Promise<void> {
   console.log(`  root key: verifier ${config.verifier}, keyPtr ${config.keyPtr}; hot tier at ${status.effectiveBps} bps`);
 
   // 4. hot transfers
-  const hotWallet = createWalletClient({ account: hotKey, chain: arbitrumSepolia, transport: http(rpcUrl(NETWORK)) });
-  await fund(hotKey.address, parseEther('0.0002'), 'hot key (gas)');
+  const hotWallet = createWalletClient({ account: hotKey, chain, transport: http(rpcUrl(net)) });
+  await fund(hotKey.address, gasPrice * 3_000_000n, 'hot key (gas)');
   const hotSender = hotTier(hotWallet, executor);
   const within = HOT_CAP / 2n;
   const hotTransferTx = await waitOk(
     await hotSender.execute(accountAddress, [{ target: deployer.account.address, value: within }]),
-    `hot transfer ${formatEther(within)} ETH (cap ${formatEther(HOT_CAP)})`,
+    `hot transfer ${amount(within)} (cap ${amount(HOT_CAP)})`,
   );
   record({ hotTransferTx });
 
@@ -286,7 +329,7 @@ async function main(): Promise<void> {
   }
 
   record({ ranAt: new Date().toISOString() });
-  console.log(`done: hashes recorded in ${deploymentPath(NETWORK)} (e2e.sdk)`);
+  console.log(`done: hashes recorded in ${deploymentPath(net)} (e2e.sdk)`);
 }
 
 main().catch((e: unknown) => {

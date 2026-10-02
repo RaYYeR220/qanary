@@ -128,6 +128,25 @@ export function canary(client: AnyClient, registry: Address) {
       return readContract(client, { ...contract, functionName: 'isDrill' });
     },
 
+    /** Bounty credited to `claimant` after a payout push failed (pull it with `withdrawOwed`). */
+    async owed(claimant: Address): Promise<{ tokenAmount: bigint; ethAmount: bigint }> {
+      const [tokenAmount, ethAmount] = await Promise.all([
+        readContract(client, { ...contract, functionName: 'owedToken', args: [claimant] }),
+        readContract(client, { ...contract, functionName: 'owedEth', args: [claimant] }),
+      ]);
+      return { tokenAmount, ethAmount };
+    },
+
+    /** Pulls everything credited to the client's account (`withdrawOwed`). */
+    async withdrawOwed(): Promise<Hash> {
+      return writeContract(client, {
+        ...contract,
+        functionName: 'withdrawOwed',
+        account: sender('withdrawOwed'),
+        chain: client.chain,
+      });
+    },
+
     /**
      * Claims `target`. `proof` is either the encoded proof or the ECDSA signature over
      * `claimMessage(target, sender)`, encoded with `encodeClaimProof`.
