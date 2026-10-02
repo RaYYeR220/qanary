@@ -3,6 +3,6 @@
 // Override with PQ_STACK_SIZE=<bytes>.
 fn main() {
     println!("cargo:rerun-if-env-changed=PQ_STACK_SIZE");
-    let size = std::env::var("PQ_STACK_SIZE").unwrap_or_else(|_| "131072".into());
+    let size = std::env::var("PQ_STACK_SIZE").unwrap_or_else(|_| "65536".into());
     println!("cargo:rustc-link-arg-cdylib=-zstack-size={size}");
 }
