@@ -26,6 +26,12 @@ import {CanaryTargets} from "./CanaryTargets.sol";
 ///      token revert) or an ETH push the claimant rejects is credited to `owedToken` / `owedEth` and
 ///      pulled later with `withdrawOwed`, so neither a token issuer nor a dust bounty can veto a claim.
 ///      There is no owner, no admin and no way to un-claim or lower the level.
+///      Liveness: `ladder` is immutable and is a Stylus program. If its activation lapses (365 days
+///      without `ArbWasm.codehashKeepalive`, or a Stylus version bump in an ArbOS upgrade) and cannot
+///      be renewed, for example while activations are paused, every L1–L3 claim reverts: the ladder
+///      half of the tripwire goes silent but never reports a false level (fail closed). K1 and R1
+///      keep working (`ecrecover`, P-256 precompile with a Solidity fallback). Keep the ladder
+///      program alive with a monitored `cargo stylus codehash-keepalive`.
 contract QuantumCanaryRegistry is IQuantumCanaryRegistry, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
