@@ -12,6 +12,20 @@ via_ir = false
 ffi = true
 fs_permissions = [{ access = "read", path = "./" }, { access = "read", path = "../../vectors" }, { access = "read-write", path = "../../deployments" }]
 gas_limit = 1000000000
+# The vendored Fireblocks ML-DSA-44 core (src/fallback/vendor, see its README.md) only compiles
+# through the IR pipeline; everything else keeps legacy codegen.
+additional_compiler_profiles = [{ name = "via-ir", via_ir = true }]
+compilation_restrictions = [
+    { paths = "src/fallback/vendor/MLDSA44Verifier.sol", via_ir = true },
+    { paths = "src/fallback/vendor/Decode.sol", via_ir = true },
+    { paths = "src/fallback/vendor/Ntt.sol", via_ir = true },
+    { paths = "src/fallback/vendor/InvNtt.sol", via_ir = true },
+]
+[lint]
+# third-party code, kept as close to upstream as possible
+ignore = ["src/fallback/vendor/**"]
+[fmt]
+ignore = ["src/fallback/vendor/**"]
 [fuzz]
 runs = 1000
 [invariant]

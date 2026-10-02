@@ -4,6 +4,8 @@ node_modules/
 dist/
 contracts/evm/out/
 contracts/evm/cache/
+contracts/evm/out-stylus/
+contracts/evm/cache-stylus/
 contracts/evm/broadcast/*/31337/
 contracts/evm/stylus-wasm/
 .env
@@ -33,3 +35,6 @@ video/
 submission-packet.md
 .superpowers/
 .worktrees/
+
+# Local Nitro dev node deployments (ephemeral)
+deployments/devnode.json

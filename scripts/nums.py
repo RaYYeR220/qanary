@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""Derive the quantum-canary target keys.
+
+Two sets of public keys are produced, one per curve of the canary ladder
+(secp160r1, P-192, P-224) plus the two production families (secp256k1, P-256):
+
+* ``nums``  - nothing-up-my-sleeve points from a try-and-increment hash to the
+  curve. Nobody knows their discrete logarithms, so a valid signature by one of
+  them proves the discrete log was computed.
+* ``drill`` - keys with *published* private keys
+  ``d = SHA-256("QANARY-DRILL-V1/" + name) mod n``, used to rehearse claims.
+
+Outputs ``deployments/canary-targets.json`` and regenerates
+``contracts/evm/src/canary/CanaryTargets.sol`` from it.
+
+Usage: python scripts/nums.py
+Requires: pip install ecdsa pycryptodome
+"""
+
+import hashlib
+import json
+import os
+import sys
+
+from Crypto.Hash import keccak
+from ecdsa import NIST192p, NIST224p, NIST256p, SECP160r1, SECP256k1
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+JSON_PATH = os.path.join(ROOT, "deployments", "canary-targets.json")
+SOL_PATH = os.path.join(ROOT, "contracts", "evm", "src", "canary", "CanaryTargets.sol")
+
+NUMS_TAG = b"QANARY-NUMS-V1/"
+DRILL_TAG = b"QANARY-DRILL-V1/"
+
+# name -> python-ecdsa curve. Order matters: L1, L2, L3, K1, R1.
+CURVES = {
+    "secp160r1": SECP160r1,
+    "p192": NIST192p,
+    "p224": NIST224p,
+    "secp256k1": SECP256k1,
+    "p256": NIST256p,
+}
+
+
+def h32(v: int) -> str:
+    """0x-prefixed, 32-byte left-padded hex."""
+    return "0x" + v.to_bytes(32, "big").hex()
+
+
+def keccak256(data: bytes) -> bytes:
+    k = keccak.new(digest_bits=256)
+    k.update(data)
+    return k.digest()
+
+
+def to_checksum_address(addr20: bytes) -> str:
+    lower = addr20.hex()
+    hashed = keccak256(lower.encode()).hex()
+    return "0x" + "".join(c.upper() if int(hashed[i], 16) >= 8 else c for i, c in enumerate(lower))
+
+
+def eth_address(x: int, y: int) -> str:
+    return to_checksum_address(keccak256(x.to_bytes(32, "big") + y.to_bytes(32, "big"))[12:])
+
+
+def is_qr(v: int, p: int) -> bool:
+    v %= p
+    return v == 0 or pow(v, (p - 1) // 2, p) == 1
+
+
+def sqrt_mod(v: int, p: int) -> int:
+    """Tonelli-Shanks square root modulo an odd prime p (v must be a QR)."""
+    v %= p
+    if v == 0:
+        return 0
+    q, s = p - 1, 0
+    while q % 2 == 0:
+        q //= 2
+        s += 1
+    z = 2
+    while is_qr(z, p):
+        z += 1
+    m, c, t, r = s, pow(z, q, p), pow(v, q, p), pow(v, (q + 1) // 2, p)
+    while t != 1:
+        i, t2 = 0, t
+        while t2 != 1:
+            t2 = t2 * t2 % p
+            i += 1
+        b = pow(c, 1 << (m - i - 1), p)
+        m, c, t, r = i, b * b % p, t * b * b % p, r * b % p
+    assert r * r % p == v
+    return r
+
+
+def params(curve):
+    cf = curve.curve
+    return cf.p(), cf.a(), cf.b(), curve.order
+
+
+def on_curve(curve, x: int, y: int) -> bool:
+    p, a, b, _ = params(curve)
+    return 0 <= x < p and 0 <= y < p and (y * y - (x * x * x + a * x + b)) % p == 0
+
+
+def hash_to_curve_tai(name: str, curve):
+    p, a, b, _ = params(curve)
+    ctr = 0
+    while True:
+        seed = NUMS_TAG + name.encode() + ctr.to_bytes(4, "big")
+        x = int.from_bytes(hashlib.sha256(seed).digest(), "big") % p
+        rhs = (x * x * x + a * x + b) % p
+        if is_qr(rhs, p):
+            y = sqrt_mod(rhs, p)
+            if y % 2 == 1:
+                y = p - y
+            return x, y, ctr
+        ctr += 1
+
+
+def drill_key(name: str, curve):
+    n = curve.order
+    d = int.from_bytes(hashlib.sha256(DRILL_TAG + name.encode()).digest(), "big") % n
+    assert 1 <= d < n
+    pt = curve.generator * d
+    return d, pt.x(), pt.y()
+
+
+def build():
+    out = {"nums": {}, "drill": {}}
+    for name, curve in CURVES.items():
+        x, y, ctr = hash_to_curve_tai(name, curve)
+        assert on_curve(curve, x, y), name
+        entry = {"x": h32(x), "y": h32(y)}
+        if name == "secp256k1":
+            entry["address"] = eth_address(x, y)
+        entry["ctr"] = ctr
+        out["nums"][name] = entry
+
+        d, dx, dy = drill_key(name, curve)
+        assert on_curve(curve, dx, dy), name
+        dentry = {"privateKey": h32(d), "x": h32(dx), "y": h32(dy)}
+        if name == "secp256k1":
+            dentry["address"] = eth_address(dx, dy)
+        out["drill"][name] = dentry
+    return out
+
+
+def sol_targets(fn: str, doc: str, t: dict) -> str:
+    fields = [
+        ("l1x", t["secp160r1"]["x"]), ("l1y", t["secp160r1"]["y"]),
+        ("l2x", t["p192"]["x"]), ("l2y", t["p192"]["y"]),
+        ("l3x", t["p224"]["x"]), ("l3y", t["p224"]["y"]),
+        ("k1", t["secp256k1"]["address"]),
+        ("r1x", t["p256"]["x"]), ("r1y", t["p256"]["y"]),
+    ]
+    body = ",\n".join(f"            {k}: {v}" for k, v in fields)
+    return (
+        f"    /// @notice {doc}\n"
+        f"    function {fn}() internal pure returns (Targets memory) {{\n"
+        f"        return Targets({{\n{body}\n        }});\n"
+        f"    }}\n"
+    )
+
+
+def render_sol(data: dict) -> str:
+    return (
+        "// SPDX-License-Identifier: MIT\n"
+        "// Generated by scripts/nums.py — do not edit.\n"
+        "pragma solidity ^0.8.28;\n"
+        "\n"
+        "/// @title CanaryTargets\n"
+        "/// @notice Public keys guarded by the quantum canary registry.\n"
+        "/// Ladder targets L1 (secp160r1), L2 (P-192) and L3 (P-224) are affine points, as are the\n"
+        "/// R1 (P-256) coordinates; K1 (secp256k1) is the Ethereum address of the key.\n"
+        "library CanaryTargets {\n"
+        "    struct Targets {\n"
+        "        bytes32 l1x;\n"
+        "        bytes32 l1y;\n"
+        "        bytes32 l2x;\n"
+        "        bytes32 l2y;\n"
+        "        bytes32 l3x;\n"
+        "        bytes32 l3y;\n"
+        "        address k1;\n"
+        "        bytes32 r1x;\n"
+        "        bytes32 r1y;\n"
+        "    }\n"
+        "\n"
+        + sol_targets(
+            "nums",
+            "Nothing-up-my-sleeve points: x = SHA-256(\"QANARY-NUMS-V1/\" || name || ctr) mod p, even y.\n"
+            "    /// Nobody knows their discrete logarithms.",
+            data["nums"],
+        )
+        + "\n"
+        + sol_targets(
+            "drill",
+            "Drill keys with published private keys d = SHA-256(\"QANARY-DRILL-V1/\" || name) mod n.\n"
+            "    /// For rehearsing claims only; they guard nothing.",
+            data["drill"],
+        )
+        + "}\n"
+    )
+
+
+def main():
+    data = build()
+
+    print(f"{'set':<6} {'curve':<10} {'ctr':>3}  {'on-curve':<8} x / address")
+    for name, curve in CURVES.items():
+        e = data["nums"][name]
+        ok = on_curve(curve, int(e["x"], 16), int(e["y"], 16))
+        print(f"{'nums':<6} {name:<10} {e['ctr']:>3}  {str(ok):<8} {e['x']}")
+        if "address" in e:
+            print(f"{'':<6} {'':<10} {'':>3}  {'':<8} {e['address']}")
+    for name, curve in CURVES.items():
+        e = data["drill"][name]
+        ok = on_curve(curve, int(e["x"], 16), int(e["y"], 16))
+        print(f"{'drill':<6} {name:<10} {'-':>3}  {str(ok):<8} d={e['privateKey']}")
+        if "address" in e:
+            print(f"{'':<6} {'':<10} {'':>3}  {'':<8} {e['address']}")
+
+    os.makedirs(os.path.dirname(JSON_PATH), exist_ok=True)
+    with open(JSON_PATH, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    os.makedirs(os.path.dirname(SOL_PATH), exist_ok=True)
+    with open(SOL_PATH, "w", encoding="utf-8", newline="\n") as f:
+        f.write(render_sol(data))
+    print(f"wrote {os.path.relpath(JSON_PATH, ROOT)}")
+    print(f"wrote {os.path.relpath(SOL_PATH, ROOT)}")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

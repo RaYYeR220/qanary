@@ -1,0 +1,34 @@
+{
+  "network": "apechain-curtis",
+  "chainId": 33111,
+  "rpc": "https://curtis.rpc.caldera.xyz/http",
+  "deployer": "0xe46b3a14790f6fb24B0067475FC4C5875d1233cA",
+  "arbos": 32,
+  "stylusVersion": 2,
+  "toolchain": {
+    "image": "qanary/stylus:0.10.9",
+    "cargoStylus": "0.10.9",
+    "rust": "1.95.0"
+  },
+  "stylus": {
+    "mldsa44Verifier": {
+      "address": "0x38Fc3687363F1A69cc7B07b79F54DeBF885f23e1",
+      "deployTx": "0xee215e4aedea7eff1c3e800302cde17fa900fd8319557b06d2ba899d5860d236",
+      "activationTx": "0x307713de90d035c5a141e0bdb13b0e985e1a5fdfaaf342728d7859f51eace8f5",
+      "sizeBytes": 15933,
+      "dataFeeWei": "86780773239342",
+      "codehash": "0x201ad0bf7a8e7600a3acd5e074da07d95ce979292043611bb2740a2941f61259",
+      "programVersion": 2,
+      "deployGasUsed": 3498410,
+      "activationGasUsed": 3350586,
+      "costWei": "696511597282199342",
+      "verifyCallGas": 207519,
+      "verify": {
+        "fixture": "vectors/mldsa44.{pk,msg,sig}, key 0x02||pk",
+        "result": "0x024ad318",
+        "wrongHashResult": "0xffffffff",
+        "gas": 207519
+      }
+    }
+  }
+}
