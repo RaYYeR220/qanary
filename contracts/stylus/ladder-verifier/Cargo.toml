@@ -1,0 +1,29 @@
+[package]
+name = "ladder-verifier"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Stylus ECDSA verifier for the quantum canary ladder (secp160r1, P-192, P-224)"
+
+[lib]
+# underscores: hyphenated lib names break cargo-stylus (stylus-sdk-rs #439)
+name = "ladder_verifier"
+crate-type = ["lib", "cdylib"]
+
+[features]
+default = ["mini-alloc"]
+mini-alloc = ["stylus-sdk/mini-alloc"]
+export-abi = ["stylus-sdk/export-abi"]
+debug = ["stylus-sdk/debug"]
+contract-client-gen = []
+
+[dependencies]
+stylus-sdk = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
+qanary-curves = { workspace = true }
+
+[dev-dependencies]
+stylus-test = "=0.10.9"
+stylus-sdk = { workspace = true, features = ["stylus-test"] }
+serde_json = "1"
