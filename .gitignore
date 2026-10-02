@@ -34,3 +34,6 @@ video/
 submission-packet.md
 .superpowers/
 .worktrees/
+
+# Local Nitro dev node deployments (ephemeral)
+deployments/devnode.json
