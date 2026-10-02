@@ -8,6 +8,12 @@ import {QuantumValidator} from "../src/QuantumValidator.sol";
 import {KeyStore} from "../src/KeyStore.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import {ERC7913P256Verifier} from "@openzeppelin/contracts/utils/cryptography/verifiers/ERC7913P256Verifier.sol";
+import {
+    ERC7913WebAuthnVerifier
+} from "@openzeppelin/contracts/utils/cryptography/verifiers/ERC7913WebAuthnVerifier.sol";
+import {ERC7913RSAVerifier} from "@openzeppelin/contracts/utils/cryptography/verifiers/ERC7913RSAVerifier.sol";
+import {NoSchemesVerifier, RawSchemesVerifier} from "./mocks/SchemeProbeVerifiers.sol";
 
 contract QuantumValidatorTest is Test {
     bytes4 internal constant ERC1271_MAGIC = 0x1626ba7e;
@@ -98,6 +104,40 @@ contract QuantumValidatorTest is Test {
         if (s2) sigs[2] = abi.encode(guardianKeys[2], d);
     }
 
+    /// @dev Proof of possession by the key at `ptr` (on `verifier`) for `account`, at the current nonce.
+    ///      Compute it before `vm.prank` / `vm.expectRevert` / `vm.expectEmit`: it is an external call.
+    function _proof(address account, address verifier, address ptr) internal view returns (bytes memory) {
+        return _sig(ptr, qv.rotationDigest(account, verifier, ptr));
+    }
+
+    function _proof(address account, address ptr) internal view returns (bytes memory) {
+        return _proof(account, address(mv), ptr);
+    }
+
+    /// @dev `account` rotates its root to `mv ‖ ptr` with a valid proof of possession.
+    function _rotate(address account, address ptr) internal {
+        bytes memory proof = _proof(account, ptr);
+        vm.prank(account);
+        qv.rotateKey(address(mv), ptr, proof);
+    }
+
+    /// @dev Proposes the recovery of `account` to `mv ‖ ptr` with `sigs` and a valid proof of possession.
+    function _propose(address account, address ptr, bytes[] memory sigs) internal {
+        bytes memory proof = _proof(account, ptr);
+        qv.proposeRecovery(account, address(mv), ptr, sigs, proof);
+    }
+
+    /// @dev Expects `proposeRecovery(account, mv, ptr, sigs, validProof)` to revert with `err`.
+    function _expectProposeRevert(address account, address ptr, bytes[] memory sigs, bytes memory err) internal {
+        bytes memory proof = _proof(account, ptr);
+        vm.expectRevert(err);
+        qv.proposeRecovery(account, address(mv), ptr, sigs, proof);
+    }
+
+    function _insufficient(uint256 valid, uint8 threshold) internal pure returns (bytes memory) {
+        return abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, valid, threshold);
+    }
+
     function _domainSeparator() internal view returns (bytes32) {
         return keccak256(
             abi.encode(
@@ -148,7 +188,10 @@ contract QuantumValidatorTest is Test {
         assertEq(
             qv.RECOVERY_TYPEHASH(), keccak256("Recovery(address account,address verifier,address keyPtr,uint256 nonce)")
         );
-        assertEq(qv.MIN_RECOVERY_DELAY(), 1 hours);
+        assertEq(
+            qv.ROTATION_TYPEHASH(), keccak256("Rotation(address account,address verifier,address keyPtr,uint256 nonce)")
+        );
+        assertEq(qv.MIN_RECOVERY_DELAY(), 24 hours);
     }
 
     function test_isModuleType() public view {
@@ -260,7 +303,8 @@ contract QuantumValidatorTest is Test {
     }
 
     function test_onInstall_delayBelowMinimum_reverts() public {
-        _expectInvalidGuardians(guardians, 2, 1 hours - 1);
+        _expectInvalidGuardians(guardians, 2, 24 hours - 1);
+        _expectInvalidGuardians(guardians, 2, 1 hours); // the former minimum
     }
 
     function test_onInstall_shortGuardian_reverts() public {
@@ -387,11 +431,12 @@ contract QuantumValidatorTest is Test {
 
     function test_rotateKey_updatesConfigAndEmits() public {
         _install(ACCOUNT, keyPtr);
+        bytes memory proof = _proof(ACCOUNT, keyPtr2);
 
         vm.expectEmit(true, false, false, true, address(qv));
         emit QuantumValidator.KeyConfigured(ACCOUNT, address(mv), keyPtr2);
         vm.prank(ACCOUNT);
-        qv.rotateKey(address(mv), keyPtr2);
+        qv.rotateKey(address(mv), keyPtr2, proof);
 
         assertEq(qv.configOf(ACCOUNT).keyPtr, keyPtr2);
         bytes32 h = keccak256("user-op");
@@ -403,8 +448,7 @@ contract QuantumValidatorTest is Test {
         _install(ACCOUNT, keyPtr);
         _install(ACCOUNT_B, keyPtr);
 
-        vm.prank(ACCOUNT_B);
-        qv.rotateKey(address(mv), keyPtr2);
+        _rotate(ACCOUNT_B, keyPtr2);
 
         assertEq(qv.configOf(ACCOUNT).keyPtr, keyPtr);
         assertEq(qv.configOf(ACCOUNT_B).keyPtr, keyPtr2);
@@ -413,37 +457,126 @@ contract QuantumValidatorTest is Test {
     }
 
     function test_rotateKey_uninitialized_reverts() public {
+        bytes memory proof = _proof(STRANGER, keyPtr2);
         vm.prank(STRANGER);
         vm.expectRevert(abi.encodeWithSelector(QuantumValidator.NotInitialized.selector, STRANGER));
-        qv.rotateKey(address(mv), keyPtr2);
+        qv.rotateKey(address(mv), keyPtr2, proof);
     }
 
     function test_rotateKey_invalidConfig_reverts() public {
         _install(ACCOUNT, keyPtr);
         vm.prank(ACCOUNT);
         vm.expectRevert(QuantumValidator.InvalidKeyConfig.selector);
-        qv.rotateKey(address(0), keyPtr2);
+        qv.rotateKey(address(0), keyPtr2, "");
         vm.prank(ACCOUNT);
         vm.expectRevert(QuantumValidator.InvalidKeyConfig.selector);
-        qv.rotateKey(address(mv), address(0xDEAD));
+        qv.rotateKey(address(mv), address(0xDEAD), "");
     }
 
     function test_rotateKey_clearsPendingRecovery() public {
         _installWithGuardians(ACCOUNT);
-        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _propose(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, true, true, false));
         assertGt(qv.pendingRecoveryOf(ACCOUNT).eta, 0);
 
+        bytes memory proof = _proof(ACCOUNT, keyPtr3);
         vm.expectEmit(true, false, false, true, address(qv));
         emit QuantumValidator.RecoveryCancelled(ACCOUNT);
         vm.prank(ACCOUNT);
-        qv.rotateKey(address(mv), keyPtr3);
+        qv.rotateKey(address(mv), keyPtr3, proof);
 
         QuantumValidator.PendingRecovery memory p = qv.pendingRecoveryOf(ACCOUNT);
         assertEq(p.eta, 0);
         assertEq(p.keyPtr, address(0));
         vm.expectRevert(QuantumValidator.NoPendingRecovery.selector);
         qv.executeRecovery(ACCOUNT);
+    }
+
+    // ---------------------------------------------------------------- rotateKey: proof of possession
+
+    function test_rotationDigest_matchesEip712() public {
+        _install(ACCOUNT, keyPtr);
+        bytes32 structHash =
+            keccak256(abi.encode(qv.ROTATION_TYPEHASH(), ACCOUNT, address(mv), keyPtr2, qv.recoveryNonce(ACCOUNT)));
+        bytes32 expected = keccak256(abi.encodePacked(hex"1901", _domainSeparator(), structHash));
+        assertEq(qv.rotationDigest(ACCOUNT, address(mv), keyPtr2), expected);
+        // distinct from the guardians' digest for the same key and nonce
+        assertTrue(qv.rotationDigest(ACCOUNT, address(mv), keyPtr2) != qv.recoveryDigest(ACCOUNT, address(mv), keyPtr2));
+    }
+
+    function test_recoveryNonce_tracksEveryBump() public {
+        assertEq(qv.recoveryNonce(ACCOUNT), 0);
+        _installWithGuardians(ACCOUNT);
+        assertEq(qv.recoveryNonce(ACCOUNT), 0);
+        _rotate(ACCOUNT, keyPtr2);
+        assertEq(qv.recoveryNonce(ACCOUNT), 1);
+        _propose(ACCOUNT, keyPtr3, _guardianSigs(ACCOUNT, keyPtr3, true, true, false));
+        assertEq(qv.recoveryNonce(ACCOUNT), 2);
+        vm.prank(ACCOUNT);
+        qv.cancelRecovery();
+        assertEq(qv.recoveryNonce(ACCOUNT), 3);
+    }
+
+    function test_rotateKey_withoutProof_reverts() public {
+        _install(ACCOUNT, keyPtr);
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.rotateKey(address(mv), keyPtr2, "");
+        assertEq(qv.configOf(ACCOUNT).keyPtr, keyPtr);
+    }
+
+    /// @dev The old key cannot vouch for the new one: only the new key's own signature counts.
+    function test_rotateKey_proofByOldKey_reverts() public {
+        _install(ACCOUNT, keyPtr);
+        bytes memory byOldKey = _sig(keyPtr, qv.rotationDigest(ACCOUNT, address(mv), keyPtr2));
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.rotateKey(address(mv), keyPtr2, byOldKey);
+    }
+
+    function test_rotateKey_proofBoundToAccountKeyAndVerifier() public {
+        _install(ACCOUNT, keyPtr);
+        _install(ACCOUNT_B, keyPtr);
+        MockVerifier other = new MockVerifier();
+
+        bytes memory forB = _proof(ACCOUNT_B, keyPtr2);
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.rotateKey(address(mv), keyPtr2, forB);
+
+        bytes memory forPtr3 = _proof(ACCOUNT, keyPtr3);
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.rotateKey(address(mv), keyPtr2, forPtr3);
+
+        bytes memory forOtherVerifier = _proof(ACCOUNT, address(other), keyPtr2);
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.rotateKey(address(mv), keyPtr2, forOtherVerifier);
+
+        vm.prank(ACCOUNT);
+        qv.rotateKey(address(other), keyPtr2, forOtherVerifier);
+        assertEq(qv.configOf(ACCOUNT).verifier, address(other));
+    }
+
+    function test_rotateKey_staleProof_reverts() public {
+        _install(ACCOUNT, keyPtr);
+        bytes memory stale = _proof(ACCOUNT, keyPtr2);
+        _rotate(ACCOUNT, keyPtr3); // bumps the nonce
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.rotateKey(address(mv), keyPtr2, stale);
+    }
+
+    /// @dev A `(verifier, keyPtr)` pair that cannot verify (wrong scheme for the verifier, inactive
+    ///      program, reverting verifier) never becomes the root: it cannot produce the proof.
+    function test_rotateKey_toKeyThatNeverVerifies_reverts() public {
+        _install(ACCOUNT, keyPtr);
+        bytes memory proof = _proof(ACCOUNT, keyPtr2);
+        mv.revertOn(abi.encodePacked(keyPtr2));
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.rotateKey(address(mv), keyPtr2, proof);
+        assertEq(qv.configOf(ACCOUNT).keyPtr, keyPtr);
     }
 
     // ---------------------------------------------------------------- setGuardians
@@ -487,8 +620,7 @@ contract QuantumValidatorTest is Test {
 
     function test_setGuardians_clearsPendingRecovery() public {
         _installWithGuardians(ACCOUNT);
-        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _propose(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, true, true, false));
 
         vm.prank(ACCOUNT);
         qv.setGuardians(guardians, 3, DELAY);
@@ -506,9 +638,7 @@ contract QuantumValidatorTest is Test {
 
     function test_proposeRecovery_oneSignature_reverts() public {
         _installWithGuardians(ACCOUNT);
-        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, false, true, false);
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 1, 2));
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _expectProposeRevert(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, false, true, false), _insufficient(1, 2));
     }
 
     function test_proposeRecovery_duplicatedSignatureCountsOnce() public {
@@ -516,19 +646,19 @@ contract QuantumValidatorTest is Test {
         bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, false, false);
         sigs[1] = sigs[0]; // guardian 0's signature replayed in guardian 1's slot
         sigs[2] = sigs[0];
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 1, 2));
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _expectProposeRevert(ACCOUNT, keyPtr2, sigs, _insufficient(1, 2));
     }
 
     function test_proposeRecovery_setsPendingAndEmits() public {
         _installWithGuardians(ACCOUNT);
         bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, false, true);
+        bytes memory proof = _proof(ACCOUNT, keyPtr2);
         uint48 eta = uint48(block.timestamp + DELAY);
 
         vm.expectEmit(true, false, false, true, address(qv));
         emit QuantumValidator.RecoveryProposed(ACCOUNT, address(mv), keyPtr2, eta);
         vm.prank(STRANGER); // anyone may relay guardian approvals
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs, proof);
 
         QuantumValidator.PendingRecovery memory p = qv.pendingRecoveryOf(ACCOUNT);
         assertEq(p.verifier, address(mv));
@@ -538,10 +668,38 @@ contract QuantumValidatorTest is Test {
         assertEq(qv.configOf(ACCOUNT).keyPtr, keyPtr);
     }
 
-    function test_executeRecovery_beforeEta_reverts() public {
+    function test_proposeRecovery_withoutProof_reverts() public {
         _installWithGuardians(ACCOUNT);
         bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs, "");
+        assertEq(qv.pendingRecoveryOf(ACCOUNT).eta, 0);
+    }
+
+    function test_proposeRecovery_proofForOtherKey_reverts() public {
+        _installWithGuardians(ACCOUNT);
+        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
+        bytes memory wrong = _proof(ACCOUNT, keyPtr3);
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs, wrong);
+        // the account's current key cannot vouch for the proposed key either
+        bytes memory byCurrentKey = _sig(keyPtr, qv.rotationDigest(ACCOUNT, address(mv), keyPtr2));
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs, byCurrentKey);
+    }
+
+    function test_proposeRecovery_targetThatNeverVerifies_reverts() public {
+        _installWithGuardians(ACCOUNT);
+        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
+        bytes memory proof = _proof(ACCOUNT, keyPtr2);
+        mv.revertOn(abi.encodePacked(keyPtr2));
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs, proof);
+    }
+
+    function test_executeRecovery_beforeEta_reverts() public {
+        _installWithGuardians(ACCOUNT);
+        _propose(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, true, true, false));
         uint48 eta = qv.pendingRecoveryOf(ACCOUNT).eta;
 
         vm.warp(eta - 1);
@@ -549,10 +707,26 @@ contract QuantumValidatorTest is Test {
         qv.executeRecovery(ACCOUNT);
     }
 
+    function test_executeRecovery_minimumDelayIs24Hours() public {
+        _install(ACCOUNT, keyPtr);
+        uint32 minDelay = qv.MIN_RECOVERY_DELAY();
+        vm.prank(ACCOUNT);
+        qv.setGuardians(guardians, 2, minDelay);
+        uint256 proposedAt = vm.getBlockTimestamp();
+        _propose(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, true, true, false));
+        assertEq(qv.pendingRecoveryOf(ACCOUNT).eta, proposedAt + 24 hours);
+
+        vm.warp(proposedAt + 24 hours - 1);
+        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.RecoveryNotReady.selector, proposedAt + 24 hours));
+        qv.executeRecovery(ACCOUNT);
+        vm.warp(proposedAt + 24 hours);
+        qv.executeRecovery(ACCOUNT);
+        assertEq(qv.configOf(ACCOUNT).keyPtr, keyPtr2);
+    }
+
     function test_executeRecovery_afterEta_swapsKey() public {
         _installWithGuardians(ACCOUNT);
-        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _propose(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, true, true, false));
         vm.warp(qv.pendingRecoveryOf(ACCOUNT).eta);
 
         vm.expectEmit(true, false, false, true, address(qv));
@@ -579,8 +753,7 @@ contract QuantumValidatorTest is Test {
 
     function test_cancelRecovery_clearsPending() public {
         _installWithGuardians(ACCOUNT);
-        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _propose(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, true, true, false));
 
         vm.expectEmit(true, false, false, true, address(qv));
         emit QuantumValidator.RecoveryCancelled(ACCOUNT);
@@ -596,8 +769,7 @@ contract QuantumValidatorTest is Test {
 
     function test_cancelRecovery_onlyAffectsCaller() public {
         _installWithGuardians(ACCOUNT);
-        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _propose(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, true, true, false));
 
         vm.prank(STRANGER);
         vm.expectRevert(QuantumValidator.NoPendingRecovery.selector);
@@ -616,25 +788,22 @@ contract QuantumValidatorTest is Test {
         _installWithGuardians(ACCOUNT);
         bytes32 digestBefore = qv.recoveryDigest(ACCOUNT, address(mv), keyPtr2);
         bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _propose(ACCOUNT, keyPtr2, sigs);
         assertTrue(qv.recoveryDigest(ACCOUNT, address(mv), keyPtr2) != digestBefore);
 
         vm.prank(ACCOUNT);
         qv.cancelRecovery();
 
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _expectProposeRevert(ACCOUNT, keyPtr2, sigs, _insufficient(0, 2));
     }
 
     function test_proposeRecovery_overwritesPending() public {
         _installWithGuardians(ACCOUNT);
-        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _propose(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, true, true, false));
 
         uint256 later = vm.getBlockTimestamp() + 1 hours;
         vm.warp(later);
-        sigs = _guardianSigs(ACCOUNT, keyPtr3, false, true, true);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr3, sigs);
+        _propose(ACCOUNT, keyPtr3, _guardianSigs(ACCOUNT, keyPtr3, false, true, true));
 
         QuantumValidator.PendingRecovery memory p = qv.pendingRecoveryOf(ACCOUNT);
         assertEq(p.keyPtr, keyPtr3);
@@ -645,48 +814,44 @@ contract QuantumValidatorTest is Test {
         _installWithGuardians(ACCOUNT);
         _installWithGuardians(ACCOUNT_B); // same guardian set
         bytes[] memory sigsForA = _guardianSigs(ACCOUNT, keyPtr2, true, true, true);
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
-        qv.proposeRecovery(ACCOUNT_B, address(mv), keyPtr2, sigsForA);
+        _expectProposeRevert(ACCOUNT_B, keyPtr2, sigsForA, _insufficient(0, 2));
     }
 
     function test_proposeRecovery_signaturesBindNewKey() public {
         _installWithGuardians(ACCOUNT);
         bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr3, sigs);
+        _expectProposeRevert(ACCOUNT, keyPtr3, sigs, _insufficient(0, 2));
     }
 
     function test_proposeRecovery_revertingGuardianVerifierIsNotCounted() public {
         _installWithGuardians(ACCOUNT);
         mv.revertOn(guardianKeys[0]);
 
-        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 1, 2));
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _expectProposeRevert(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, true, true, false), _insufficient(1, 2));
 
-        sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, true);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _propose(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, true, true, true));
         assertEq(qv.pendingRecoveryOf(ACCOUNT).keyPtr, keyPtr2);
     }
 
     function test_proposeRecovery_noGuardians_reverts() public {
         _install(ACCOUNT, keyPtr);
-        bytes[] memory sigs = new bytes[](0);
-        vm.expectRevert(QuantumValidator.InvalidGuardianConfig.selector);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _expectProposeRevert(
+            ACCOUNT, keyPtr2, new bytes[](0), abi.encodeWithSelector(QuantumValidator.InvalidGuardianConfig.selector)
+        );
     }
 
     function test_proposeRecovery_uninitialized_reverts() public {
-        bytes[] memory sigs = new bytes[](0);
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.NotInitialized.selector, ACCOUNT));
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _expectProposeRevert(
+            ACCOUNT, keyPtr2, new bytes[](0), abi.encodeWithSelector(QuantumValidator.NotInitialized.selector, ACCOUNT)
+        );
     }
 
     function test_proposeRecovery_invalidNewKey_reverts() public {
         _installWithGuardians(ACCOUNT);
         bytes[] memory sigs = _guardianSigs(ACCOUNT, address(0xDEAD), true, true, false);
-        vm.expectRevert(QuantumValidator.InvalidKeyConfig.selector);
-        qv.proposeRecovery(ACCOUNT, address(mv), address(0xDEAD), sigs);
+        _expectProposeRevert(
+            ACCOUNT, address(0xDEAD), sigs, abi.encodeWithSelector(QuantumValidator.InvalidKeyConfig.selector)
+        );
     }
 
     function test_proposeRecovery_extraSignaturesIgnored() public {
@@ -697,7 +862,7 @@ contract QuantumValidatorTest is Test {
         sigs[1] = base[1];
         sigs[3] = base[0];
         sigs[4] = base[1];
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _propose(ACCOUNT, keyPtr2, sigs);
         assertEq(qv.pendingRecoveryOf(ACCOUNT).keyPtr, keyPtr2);
     }
 
@@ -706,7 +871,7 @@ contract QuantumValidatorTest is Test {
     function test_onUninstall_clearsAllState() public {
         _installWithGuardians(ACCOUNT);
         bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _propose(ACCOUNT, keyPtr2, sigs);
 
         vm.prank(ACCOUNT);
         qv.onUninstall("");
@@ -732,8 +897,7 @@ contract QuantumValidatorTest is Test {
         // Reinstall works, and pre-uninstall guardian approvals stay dead (nonce is not reset).
         _installWithGuardians(ACCOUNT);
         assertTrue(qv.isInitialized(ACCOUNT));
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _expectProposeRevert(ACCOUNT, keyPtr2, sigs, _insufficient(0, 2));
     }
 
     function test_onUninstall_onlyAffectsCaller() public {
@@ -780,10 +944,10 @@ contract QuantumValidatorTest is Test {
         _install(ACCOUNT, keyPtr);
         vm.prank(ACCOUNT);
         vm.expectRevert(QuantumValidator.InvalidKeyConfig.selector);
-        qv.rotateKey(address(4), keyPtr2);
+        qv.rotateKey(address(4), keyPtr2, "");
         vm.prank(ACCOUNT);
         vm.expectRevert(QuantumValidator.InvalidKeyConfig.selector);
-        qv.rotateKey(EOA_VERIFIER, keyPtr2);
+        qv.rotateKey(EOA_VERIFIER, keyPtr2, "");
     }
 
     function test_proposeRecovery_codelessVerifier_reverts() public {
@@ -793,7 +957,7 @@ contract QuantumValidatorTest is Test {
         sigs[0] = abi.encode(guardianKeys[0], d);
         sigs[1] = abi.encode(guardianKeys[1], d);
         vm.expectRevert(QuantumValidator.InvalidKeyConfig.selector);
-        qv.proposeRecovery(ACCOUNT, address(4), keyPtr2, sigs);
+        qv.proposeRecovery(ACCOUNT, address(4), keyPtr2, sigs, "");
     }
 
     function test_onInstall_guardianWithPrecompilePrefix_reverts() public {
@@ -819,17 +983,195 @@ contract QuantumValidatorTest is Test {
         qv.setGuardians(gs, 1, DELAY);
     }
 
+    // ---------------------------------------------------------------- post-quantum verifiers only
+
+    uint256 internal constant P256_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551;
+
+    function _p256Guardian(ERC7913P256Verifier p256, uint256 pk) internal pure returns (bytes memory) {
+        (uint256 qx, uint256 qy) = vm.publicKeyP256(pk);
+        return abi.encodePacked(address(p256), bytes32(qx), bytes32(qy));
+    }
+
+    function _schemes1(uint8 a) internal pure returns (uint8[] memory s) {
+        s = new uint8[](1);
+        s[0] = a;
+    }
+
+    /// @dev A classical (P-256 passkey) guardian is rejected wherever a guardian set is configured. If
+    ///      it were accepted, anyone able to forge its signature would rotate the post-quantum root
+    ///      after the recovery delay.
+    function test_classicalGuardian_p256_rejected() public {
+        ERC7913P256Verifier p256 = new ERC7913P256Verifier();
+        bytes[] memory gs = new bytes[](1);
+        gs[0] = _p256Guardian(p256, 0xC0FFEE);
+
+        _expectInvalidGuardians(gs, 1, DELAY); // onInstall
+
+        _install(ACCOUNT, keyPtr);
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidGuardianConfig.selector);
+        qv.setGuardians(gs, 1, DELAY); // setGuardians
+        (bytes[] memory stored, uint8 threshold,) = qv.guardiansOf(ACCOUNT);
+        assertEq(stored.length, 0);
+        assertEq(threshold, 0);
+    }
+
+    /// @dev One classical guardian taints the whole set, even next to post-quantum ones.
+    function test_classicalGuardian_mixedIntoPqSet_rejected() public {
+        ERC7913P256Verifier p256 = new ERC7913P256Verifier();
+        bytes[] memory gs = new bytes[](3);
+        gs[0] = guardians[0];
+        gs[1] = guardians[1];
+        gs[2] = _p256Guardian(p256, 0xC0FFEE);
+        _install(ACCOUNT, keyPtr);
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidGuardianConfig.selector);
+        qv.setGuardians(gs, 2, DELAY);
+    }
+
+    function test_classicalGuardian_webAuthnAndRsa_rejected() public {
+        bytes[] memory gs = new bytes[](1);
+        gs[0] = abi.encodePacked(address(new ERC7913WebAuthnVerifier()), bytes32(uint256(1)), bytes32(uint256(2)));
+        _expectInvalidGuardians(gs, 1, DELAY);
+        gs[0] = abi.encodePacked(address(new ERC7913RSAVerifier()), abi.encode(hex"010001", hex"c0ffee"));
+        _expectInvalidGuardians(gs, 1, DELAY);
+    }
+
+    /// @dev The classical-guardian takeover end to end: with the P-256 guardian refused, there is no
+    ///      guardian set through which a forged P-256 approval could reach `proposeRecovery`.
+    function test_classicalGuardian_cannotRotatePqRoot() public {
+        ERC7913P256Verifier p256 = new ERC7913P256Verifier();
+        uint256 guardianPk = 0xC0FFEE;
+        bytes[] memory gs = new bytes[](1);
+        gs[0] = _p256Guardian(p256, guardianPk);
+        _install(ACCOUNT, keyPtr);
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidGuardianConfig.selector);
+        qv.setGuardians(gs, 1, DELAY);
+
+        // the adversary holds a valid P-256 approval of its own key, and the key's proof of possession
+        bytes32 d = qv.recoveryDigest(ACCOUNT, address(mv), keyPtr3);
+        (bytes32 r, bytes32 s) = vm.signP256(guardianPk, d);
+        if (uint256(s) > P256_N / 2) s = bytes32(P256_N - uint256(s));
+        bytes[] memory sigs = new bytes[](1);
+        sigs[0] = abi.encodePacked(r, s);
+        bytes memory proof = _proof(ACCOUNT, keyPtr3);
+        vm.expectRevert(QuantumValidator.InvalidGuardianConfig.selector); // recovery is not enabled
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr3, sigs, proof);
+        assertEq(qv.configOf(ACCOUNT).keyPtr, keyPtr);
+    }
+
+    function test_classicalRootVerifier_rejectedOnInstallRotateAndRecovery() public {
+        ERC7913P256Verifier p256 = new ERC7913P256Verifier();
+        NoSchemesVerifier noSchemes = new NoSchemesVerifier();
+        _expectInvalidKey(address(p256), keyPtr);
+        _expectInvalidKey(address(noSchemes), keyPtr);
+
+        _installWithGuardians(ACCOUNT);
+        bytes memory proof = _proof(ACCOUNT, address(noSchemes), keyPtr2); // a valid proof on that verifier
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyConfig.selector);
+        qv.rotateKey(address(noSchemes), keyPtr2, proof);
+
+        bytes32 d = qv.recoveryDigest(ACCOUNT, address(noSchemes), keyPtr2);
+        bytes[] memory sigs = new bytes[](3);
+        sigs[0] = abi.encode(guardianKeys[0], d);
+        sigs[1] = abi.encode(guardianKeys[1], d);
+        vm.expectRevert(QuantumValidator.InvalidKeyConfig.selector);
+        qv.proposeRecovery(ACCOUNT, address(noSchemes), keyPtr2, sigs, proof);
+    }
+
+    function test_pqVerifier_guardianOnAnotherPqVerifier_accepted() public {
+        RawSchemesVerifier falconLike = new RawSchemesVerifier();
+        uint8[] memory ids = new uint8[](2);
+        ids[0] = 1;
+        ids[1] = 4;
+        falconLike.setSchemes(ids);
+        bytes[] memory gs = new bytes[](2);
+        gs[0] = guardians[0];
+        gs[1] = abi.encodePacked(address(falconLike), "falcon-guardian");
+        _install(ACCOUNT, keyPtr);
+        vm.prank(ACCOUNT);
+        qv.setGuardians(gs, 2, DELAY);
+        (bytes[] memory stored,,) = qv.guardiansOf(ACCOUNT);
+        assertEq(stored.length, 2);
+
+        // every post-quantum id is accepted
+        for (uint8 id = 1; id <= 4; ++id) {
+            falconLike.setSchemes(_schemes1(id));
+            bytes memory data = _installData(address(falconLike), keyPtr, new bytes[](0), 0, 0);
+            address a = address(uint160(0xACC0 + id));
+            vm.prank(a);
+            qv.onInstall(data);
+            assertEq(qv.configOf(a).verifier, address(falconLike));
+        }
+    }
+
+    function test_pqVerifier_malformedSchemes_rejected() public {
+        RawSchemesVerifier v = new RawSchemesVerifier();
+        uint8[] memory none = new uint8[](0);
+        uint8[] memory five = new uint8[](5);
+        for (uint256 i = 0; i < 5; ++i) {
+            five[i] = 2;
+        }
+        uint8[] memory mixed = new uint8[](2);
+        mixed[0] = 2;
+        mixed[1] = 5;
+
+        v.setSchemes(none); // empty list
+        _expectInvalidKey(address(v), keyPtr);
+        v.setSchemes(_schemes1(0)); // 0 is not a scheme
+        _expectInvalidKey(address(v), keyPtr);
+        v.setSchemes(_schemes1(5)); // unknown id
+        _expectInvalidKey(address(v), keyPtr);
+        v.setSchemes(_schemes1(255));
+        _expectInvalidKey(address(v), keyPtr);
+        v.setSchemes(mixed); // one classical or unknown id taints the list
+        _expectInvalidKey(address(v), keyPtr);
+        v.setSchemes(five); // longer than the four post-quantum ids
+        _expectInvalidKey(address(v), keyPtr);
+        v.setAnswer(""); // empty return data
+        _expectInvalidKey(address(v), keyPtr);
+        v.setAnswer(abi.encode(uint256(0x20))); // truncated
+        _expectInvalidKey(address(v), keyPtr);
+        v.setAnswer(abi.encode(uint256(0x40), uint256(1), uint256(2))); // wrong offset
+        _expectInvalidKey(address(v), keyPtr);
+        v.setAnswer(abi.encode(uint256(0x20), uint256(2), uint256(2))); // length 2, one element
+        _expectInvalidKey(address(v), keyPtr);
+        v.setAnswer(abi.encodePacked(abi.encode(_schemes1(2)), uint256(0))); // trailing word
+        _expectInvalidKey(address(v), keyPtr);
+        v.setAnswer(abi.encode(uint256(0x20), uint256(1), uint256(2) | (uint256(1) << 8))); // not a uint8
+        _expectInvalidKey(address(v), keyPtr);
+        v.setReverting();
+        _expectInvalidKey(address(v), keyPtr);
+
+        // and the same verifier is accepted once its answer is well formed
+        v.setSchemes(_schemes1(2));
+        bytes memory data = _installData(address(v), keyPtr, new bytes[](0), 0, 0);
+        vm.prank(ACCOUNT);
+        qv.onInstall(data);
+        assertEq(qv.configOf(ACCOUNT).verifier, address(v));
+    }
+
+    function test_pqVerifier_malformedSchemes_rejectedAsGuardian() public {
+        RawSchemesVerifier v = new RawSchemesVerifier();
+        v.setSchemes(_schemes1(5));
+        bytes[] memory gs = new bytes[](1);
+        gs[0] = abi.encodePacked(address(v), "guardian-key");
+        _expectInvalidGuardians(gs, 1, DELAY);
+        v.setReverting();
+        _expectInvalidGuardians(gs, 1, DELAY);
+    }
+
     // ---------------------------------------------------------------- stale approvals die
 
     function test_rotateKey_invalidatesOutstandingApprovals() public {
         _installWithGuardians(ACCOUNT);
         bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false); // collected, not submitted
 
-        vm.prank(ACCOUNT);
-        qv.rotateKey(address(mv), keyPtr3);
+        _rotate(ACCOUNT, keyPtr3);
 
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _expectProposeRevert(ACCOUNT, keyPtr2, sigs, _insufficient(0, 2));
     }
 
     function test_setGuardians_invalidatesOutstandingApprovals() public {
@@ -839,8 +1181,7 @@ contract QuantumValidatorTest is Test {
         vm.prank(ACCOUNT);
         qv.setGuardians(guardians, 2, DELAY); // same set, re-confirmed
 
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _expectProposeRevert(ACCOUNT, keyPtr2, sigs, _insufficient(0, 2));
     }
 
     function test_reinstall_invalidatesOutstandingApprovals() public {
@@ -851,34 +1192,39 @@ contract QuantumValidatorTest is Test {
         qv.onUninstall("");
         _installWithGuardians(ACCOUNT);
 
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _expectProposeRevert(ACCOUNT, keyPtr2, sigs, _insufficient(0, 2));
     }
 
     function test_cancelRecovery_invalidatesOutstandingApprovals() public {
         _installWithGuardians(ACCOUNT);
-        bytes[] memory first = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, first);
+        _propose(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, true, true, false));
         bytes[] memory second = _guardianSigs(ACCOUNT, keyPtr3, true, true, false); // queued follow-up
 
         vm.prank(ACCOUNT);
         qv.cancelRecovery();
 
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr3, second);
+        _expectProposeRevert(ACCOUNT, keyPtr3, second, _insufficient(0, 2));
     }
 
     function test_executeRecovery_invalidatesOutstandingApprovals() public {
         _installWithGuardians(ACCOUNT);
-        bytes[] memory first = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, first);
+        _propose(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, true, true, false));
         bytes[] memory second = _guardianSigs(ACCOUNT, keyPtr3, true, true, false);
 
         vm.warp(qv.pendingRecoveryOf(ACCOUNT).eta);
         qv.executeRecovery(ACCOUNT);
 
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr3, second);
+        _expectProposeRevert(ACCOUNT, keyPtr3, second, _insufficient(0, 2));
+    }
+
+    /// @dev Proofs of possession die with the nonce too: one collected before a proposal is stale after it.
+    function test_proposeRecovery_staleProof_reverts() public {
+        _installWithGuardians(ACCOUNT);
+        bytes memory staleProof = _proof(ACCOUNT, keyPtr3);
+        _propose(ACCOUNT, keyPtr2, _guardianSigs(ACCOUNT, keyPtr2, true, true, false));
+        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr3, true, true, false);
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr3, sigs, staleProof);
     }
 
     // ---------------------------------------------------------------- ERC-7562 storage
@@ -892,6 +1238,10 @@ contract QuantumValidatorTest is Test {
         assertGt(writes.length, 0);
         _assertAllAssociated(ACCOUNT, reads);
         _assertAllAssociated(ACCOUNT, writes);
+        // the `schemes()` probe of the verifier reads no storage
+        (reads, writes) = vm.accesses(address(mv));
+        assertEq(reads.length, 0);
+        assertEq(writes.length, 0);
     }
 
     function test_validateUserOp_touchesOnlyAssociatedStorage() public {
@@ -927,7 +1277,14 @@ contract QuantumValidatorTest is Test {
         bytes[] memory sigs = new bytes[](2);
         sigs[0] = s0;
         sigs[1] = s1;
-        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
-        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+        _expectProposeRevert(ACCOUNT, keyPtr2, sigs, _insufficient(0, 2));
+    }
+
+    function testFuzz_randomProofNeverRotates(bytes calldata proof) public {
+        _install(ACCOUNT, keyPtr);
+        vm.assume(keccak256(proof) != keccak256(_proof(ACCOUNT, keyPtr2)));
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyProof.selector);
+        qv.rotateKey(address(mv), keyPtr2, proof);
     }
 }

@@ -11,6 +11,7 @@ import {PackedUserOperation} from "@openzeppelin/contracts/interfaces/IERC4337.s
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {IQanaryPQVerifier} from "./interfaces/IQanaryPQVerifier.sol";
 
 /// @title QuantumValidator
 /// @notice ERC-7579 validator module that makes a post-quantum public key the root authority of a
@@ -22,6 +23,30 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 ///      Every account-scoped function acts on `msg.sender` (the account); there are no owners or
 ///      admins. Guardians are ERC-7913 signers (`verifier ‖ key`, longer than 20 bytes) that approve a
 ///      replacement key over an EIP-712 `Recovery` digest bound to a per-account nonce.
+///
+///      Trust model.
+///      - Post-quantum verifiers only. The root verifier (install, rotation, recovery target) and
+///        every guardian's verifier must answer `schemes()` (`IQanaryPQVerifier`) with a non-empty
+///        list of post-quantum scheme ids (1 FN-DSA-512, 2 ML-DSA-44, 3 ML-DSA-65, 4 Falcon-512).
+///        Verifiers that do not implement it, such as OpenZeppelin's P-256, WebAuthn and RSA
+///        ERC-7913 verifiers, are rejected: a classical guardian would be a classical path to the
+///        post-quantum root. The check trusts the verifier to describe itself; it keeps honest
+///        configurations post-quantum and does not defend against a verifier written to lie.
+///      - Proof of possession. A new root key (`rotateKey`, `proposeRecovery`) must sign
+///        `rotationDigest(account, verifier, keyPtr)` first, so the account cannot move to a key it
+///        does not control or a `(verifier, keyPtr)` pair that never verifies (wrong scheme for the
+///        verifier, inactive Stylus program, no `verify`).
+///      - Recovery is slow on purpose: at least `MIN_RECOVERY_DELAY` (24 hours) between proposal and
+///        execution, during which the account can `cancelRecovery`.
+///      - Liveness depends on the verifier. Validation, ERC-1271 and `rotateKey` all go through the
+///        one configured verifier. A Stylus program stops executing when its activation lapses
+///        (365 days without `ArbWasm.codehashKeepalive`, or a Stylus version bump in an ArbOS
+///        upgrade); while new activations and reactivations are paused it cannot come back, every
+///        signature check fails, and the account cannot sign the `rotateKey` that would move it
+///        away. Run a keepalive (`cargo stylus codehash-keepalive`, allowed about 31 days after the
+///        last activation and required before 365) for every verifier in use, and give the account
+///        guardians whose keys use a different verifier, e.g. the Solidity ML-DSA-44 fallback
+///        (`src/fallback`), so recovery can rotate the root away from an expired or paused program.
 contract QuantumValidator is IERC7579Validator, EIP712 {
     /// @notice The account's root key: an ERC-7913 verifier plus a KeyStore pointer.
     struct Config {
@@ -64,11 +89,21 @@ contract QuantumValidator is IERC7579Validator, EIP712 {
     bytes32 public constant RECOVERY_TYPEHASH =
         keccak256("Recovery(address account,address verifier,address keyPtr,uint256 nonce)");
 
+    /// @notice EIP-712 type of the proof of possession a new root key signs before it is installed
+    ///         by `rotateKey` or proposed by `proposeRecovery`.
+    bytes32 public constant ROTATION_TYPEHASH =
+        keccak256("Rotation(address account,address verifier,address keyPtr,uint256 nonce)");
+
     /// @notice Lower bound on the delay between a recovery proposal and its execution.
-    uint32 public constant MIN_RECOVERY_DELAY = 1 hours;
+    uint32 public constant MIN_RECOVERY_DELAY = 24 hours;
 
     /// @dev Upper bound on the guardian set size, keeping `proposeRecovery` gas bounded.
     uint256 private constant MAX_GUARDIANS = 16;
+
+    /// @dev Post-quantum scheme ids a verifier may report from `schemes()`: 1 FN-DSA-512,
+    ///      2 ML-DSA-44, 3 ML-DSA-65, 4 Falcon-512 (round 3). A list holds at most one of each.
+    uint256 private constant MIN_PQ_SCHEME = 1;
+    uint256 private constant MAX_PQ_SCHEME = 4;
 
     /// @dev ERC-1271 failure value.
     bytes4 private constant ERC1271_INVALID = 0xffffffff;
@@ -105,11 +140,15 @@ contract QuantumValidator is IERC7579Validator, EIP712 {
     /// @notice The operation requires `account` to have installed the module.
     error NotInitialized(address account);
 
-    /// @notice The verifier has no code or lies in the precompile range, or the key pointer holds
-    ///         fewer than 2 bytes of code.
+    /// @notice The verifier has no code, lies in the precompile range or is not a post-quantum
+    ///         verifier (`schemes()`), or the key pointer holds fewer than 2 bytes of code.
     error InvalidKeyConfig();
 
-    /// @notice The guardian set, threshold or delay is malformed, or recovery is not enabled.
+    /// @notice The new key's signature over `rotationDigest` does not verify.
+    error InvalidKeyProof();
+
+    /// @notice The guardian set, threshold or delay is malformed, a guardian's verifier is not a
+    ///         post-quantum verifier, or recovery is not enabled.
     error InvalidGuardianConfig();
 
     /// @notice Fewer than `threshold` distinct guardians produced a valid approval.
@@ -127,16 +166,21 @@ contract QuantumValidator is IERC7579Validator, EIP712 {
 
     /// @notice Installs the module for the calling account.
     /// @dev `data` is `abi.encode(InstallData)`. The verifier must be deployed code above the
-    ///      precompile range. Guardians are optional: `threshold == 0` requires an empty guardian
-    ///      list, otherwise `0 < threshold <= guardians.length <= 16`, `delay >= MIN_RECOVERY_DELAY`,
-    ///      and every guardian is unique, longer than 20 bytes and prefixed by a valid verifier.
-    ///      Without guardians this writes only `_config[msg.sender]` (ERC-7562-associated storage), so
+    ///      precompile range whose `schemes()` lists only post-quantum schemes. Guardians are
+    ///      optional: `threshold == 0` requires an empty guardian list, otherwise
+    ///      `0 < threshold <= guardians.length <= 16`, `delay >= MIN_RECOVERY_DELAY`, and every
+    ///      guardian is unique, longer than 20 bytes and prefixed by a valid post-quantum verifier.
+    ///      No proof of possession is required at install: when the account is created with the
+    ///      module as its root, the first user operation's own signature check plays that role.
+    ///      Without guardians this writes only `_config[msg.sender]` (ERC-7562-associated storage)
+    ///      and makes one `schemes()` staticcall to the verifier, which validation calls anyway, so
     ///      it is safe during validation. With guardians it is not; see `InstallData`.
     /// @param data The ABI-encoded `InstallData`.
     function onInstall(bytes calldata data) external {
         address account = msg.sender;
         if (isInitialized(account)) revert AlreadyInitialized(account);
         InstallData memory d = abi.decode(data, (InstallData));
+        _requireValidKey(d.verifier, d.keyPtr);
         _setKey(account, d.verifier, d.keyPtr);
         if (d.threshold != 0 || d.guardians.length != 0) {
             _setGuardians(account, d.guardians, d.threshold, d.delay);
@@ -219,20 +263,52 @@ contract QuantumValidator is IERC7579Validator, EIP712 {
 
     /// @notice Replaces the calling account's root key, discards any pending recovery and
     ///         invalidates every outstanding guardian approval.
-    /// @param verifier The new ERC-7913 verifier (deployed code above the precompile range).
+    /// @dev `proof` is the new key's signature over `rotationDigest(account, verifier, keyPtr)`,
+    ///      evaluated at the recovery nonce current when `rotateKey` runs. Anything earlier in the
+    ///      same batch that bumps the nonce (another rotation, `setGuardians`, `cancelRecovery`)
+    ///      invalidates the proof.
+    /// @param verifier The new post-quantum ERC-7913 verifier (deployed code above the precompile
+    ///        range whose `schemes()` lists only post-quantum schemes).
     /// @param keyPtr The new KeyStore pointer.
-    function rotateKey(address verifier, address keyPtr) external {
+    /// @param proof The new key's signature over `rotationDigest(msg.sender, verifier, keyPtr)`.
+    function rotateKey(address verifier, address keyPtr, bytes calldata proof) external {
         address account = msg.sender;
         if (!isInitialized(account)) revert NotInitialized(account);
+        _requireValidKey(verifier, keyPtr);
+        _requireKeyProof(account, verifier, keyPtr, proof);
         _setKey(account, verifier, keyPtr);
         _resetRecovery(account);
+    }
+
+    /// @notice EIP-712 digest a new root key signs to prove possession before it replaces the root
+    ///         of `account` (`rotateKey`) or is proposed by guardians (`proposeRecovery`).
+    /// @dev Bound to the account's current recovery nonce (see `recoveryNonce`), the validator and
+    ///      the chain. The proof only shows that the new key works; it authorises nothing by itself.
+    /// @param account The smart account.
+    /// @param verifier The new ERC-7913 verifier.
+    /// @param keyPtr The new KeyStore pointer.
+    /// @return The typed-data digest of `Rotation(account, verifier, keyPtr, nonce)`.
+    function rotationDigest(address account, address verifier, address keyPtr) public view returns (bytes32) {
+        return
+            _hashTypedDataV4(
+                keccak256(abi.encode(ROTATION_TYPEHASH, account, verifier, keyPtr, _recoveryNonce[account]))
+            );
+    }
+
+    /// @notice The recovery nonce of `account`, bound into `recoveryDigest` and `rotationDigest`.
+    /// @param account The smart account.
+    /// @return The current nonce.
+    function recoveryNonce(address account) external view returns (uint256) {
+        return _recoveryNonce[account];
     }
 
     /// @notice Replaces the calling account's guardian set, discards any pending recovery and
     ///         invalidates every outstanding guardian approval.
     /// @dev Pass an empty list with `threshold = 0` to disable recovery.
     /// @param guardians ERC-7913 guardian signers (`verifier ‖ key`): unique, longer than 20 bytes,
-    ///        and prefixed by a verifier that is deployed code above the precompile range.
+    ///        and prefixed by a post-quantum verifier (deployed code above the precompile range whose
+    ///        `schemes()` lists only post-quantum schemes). Prefer a verifier other than the root's
+    ///        (see the trust model).
     /// @param threshold Approvals required to propose a recovery.
     /// @param delay Seconds between a proposal and its earliest execution (>= `MIN_RECOVERY_DELAY`).
     function setGuardians(bytes[] calldata guardians, uint8 threshold, uint32 delay) external {
@@ -275,14 +351,21 @@ contract QuantumValidator is IERC7579Validator, EIP712 {
     /// @notice Starts a recovery of `account` to a new key, approved by at least `threshold` guardians.
     /// @dev Callable by anyone. `guardianSigs[i]` is guardian `i`'s signature over `recoveryDigest`;
     ///      an empty entry abstains and entries past the guardian count are ignored, so each guardian
-    ///      counts at most once. Increments the recovery nonce and overwrites any pending recovery.
+    ///      counts at most once. `newKeyProof` is the proposed key's signature over `rotationDigest`
+    ///      (same nonce as the guardians' digest). Increments the recovery nonce and overwrites any
+    ///      pending recovery.
     /// @param account The smart account to recover.
-    /// @param verifier The proposed ERC-7913 verifier.
+    /// @param verifier The proposed post-quantum ERC-7913 verifier.
     /// @param keyPtr The proposed KeyStore pointer.
     /// @param guardianSigs Guardian signatures aligned to guardian index.
-    function proposeRecovery(address account, address verifier, address keyPtr, bytes[] calldata guardianSigs)
-        external
-    {
+    /// @param newKeyProof The proposed key's signature over `rotationDigest(account, verifier, keyPtr)`.
+    function proposeRecovery(
+        address account,
+        address verifier,
+        address keyPtr,
+        bytes[] calldata guardianSigs,
+        bytes calldata newKeyProof
+    ) external {
         if (!isInitialized(account)) revert NotInitialized(account);
         GuardianSet storage g = _guardians[account];
         uint8 threshold = g.threshold;
@@ -298,6 +381,7 @@ contract QuantumValidator is IERC7579Validator, EIP712 {
             if (SignatureChecker.isValidSignatureNow(g.signers[i], digest, guardianSigs[i])) ++valid;
         }
         if (valid < threshold) revert InsufficientGuardianSignatures(valid, threshold);
+        _requireKeyProof(account, verifier, keyPtr, newKeyProof);
 
         ++_recoveryNonce[account];
         // casting to 'uint48' is safe because block timestamps stay below 2^48 for millions of years
@@ -319,12 +403,13 @@ contract QuantumValidator is IERC7579Validator, EIP712 {
     }
 
     /// @notice Installs the pending replacement key of `account` once its delay has elapsed.
-    /// @dev Callable by anyone. Guardians are left unchanged; outstanding approvals are invalidated.
+    /// @dev Callable by anyone. The key was checked (post-quantum verifier, proof of possession) when
+    ///      it was proposed. Guardians are left unchanged; outstanding approvals are invalidated.
     /// @param account The smart account being recovered.
     function executeRecovery(address account) external {
         PendingRecovery memory p = _pending[account];
         if (p.eta == 0) revert NoPendingRecovery();
-        // Timestamp drift is negligible against a recovery delay of at least one hour.
+        // Timestamp drift is negligible against a recovery delay of at least 24 hours.
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < p.eta) revert RecoveryNotReady(p.eta);
         delete _pending[account];
@@ -348,10 +433,20 @@ contract QuantumValidator is IERC7579Validator, EIP712 {
         return SignatureChecker.isValidSignatureNow(abi.encodePacked(c.verifier, c.keyPtr), hash, signature);
     }
 
+    /// @dev Callers validate the key first (`_requireValidKey`, and `_requireKeyProof` for rotation).
     function _setKey(address account, address verifier, address keyPtr) private {
-        _requireValidKey(verifier, keyPtr);
         _config[account] = Config({verifier: verifier, keyPtr: keyPtr});
+        // The only external calls before this log are STATICCALLs to verifiers (`schemes()`, `verify`),
+        // which cannot modify state or reenter a state-changing path to reorder it.
+        // forge-lint: disable-next-line(reentrancy-events)
         emit KeyConfigured(account, verifier, keyPtr);
+    }
+
+    /// @dev Reverts unless `proof` is a valid signature of `verifier ‖ keyPtr` over
+    ///      `rotationDigest(account, verifier, keyPtr)`.
+    function _requireKeyProof(address account, address verifier, address keyPtr, bytes calldata proof) private view {
+        Config memory c = Config({verifier: verifier, keyPtr: keyPtr});
+        if (!_isValidSignature(c, rotationDigest(account, verifier, keyPtr), proof)) revert InvalidKeyProof();
     }
 
     function _setGuardians(address account, bytes[] memory guardians, uint8 threshold, uint32 delay) private {
@@ -364,6 +459,9 @@ contract QuantumValidator is IERC7579Validator, EIP712 {
         }
         g.threshold = threshold;
         g.delay = delay;
+        // The only external calls before this log are STATICCALLs to verifiers (`schemes()`, `verify`),
+        // which cannot modify state or reenter a state-changing path to reorder it.
+        // forge-lint: disable-next-line(reentrancy-events)
         emit GuardiansSet(account, guardians.length, threshold, delay);
     }
 
@@ -372,24 +470,54 @@ contract QuantumValidator is IERC7579Validator, EIP712 {
         ++_recoveryNonce[account];
         if (_pending[account].eta != 0) {
             delete _pending[account];
+            // The only external calls before this log are STATICCALLs to verifiers (`schemes()`, `verify`),
+            // which cannot modify state or reenter a state-changing path to reorder it.
+            // forge-lint: disable-next-line(reentrancy-events)
             emit RecoveryCancelled(account);
         }
     }
 
     function _requireValidKey(address verifier, address keyPtr) private view {
-        if (!_isVerifier(verifier) || keyPtr.code.length < 2) revert InvalidKeyConfig();
+        if (!_isPQVerifier(verifier) || keyPtr.code.length < 2) revert InvalidKeyConfig();
     }
 
     /// @dev A verifier must be deployed code above the precompile range (see `MAX_PRECOMPILE`). An
     ///      address without code would make every check fail (bricking the account); a precompile
-    ///      could make every check pass.
-    function _isVerifier(address verifier) private view returns (bool) {
-        return uint160(verifier) > MAX_PRECOMPILE && verifier.code.length != 0;
+    ///      could make every check pass. It must also describe itself as post-quantum: `schemes()`
+    ///      succeeds and returns the strict ABI encoding of a `uint8[]` with 1 to 4 entries, each a
+    ///      post-quantum scheme id. At most 4 words of return data are read.
+    function _isPQVerifier(address verifier) private view returns (bool ok) {
+        if (uint160(verifier) <= MAX_PRECOMPILE || verifier.code.length == 0) return false;
+        bytes4 selector = IQanaryPQVerifier.schemes.selector;
+        uint256 minId = MIN_PQ_SCHEME;
+        uint256 maxId = MAX_PQ_SCHEME;
+        assembly ("memory-safe") {
+            let p := mload(0x40)
+            mstore(p, selector)
+            // Return data layout: offset (0x20), length n, then n words; 2 + MAX_PQ_SCHEME words max.
+            let success := staticcall(gas(), verifier, p, 0x04, p, 0xc0)
+            let size := returndatasize()
+            if and(success, iszero(lt(size, 0x60))) {
+                let n := mload(add(p, 0x20))
+                if and(eq(mload(p), 0x20), and(gt(n, 0), iszero(gt(n, maxId)))) {
+                    if eq(size, add(0x40, mul(n, 0x20))) {
+                        ok := 1
+                        for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+                            let id := mload(add(p, add(0x40, mul(i, 0x20))))
+                            if or(lt(id, minId), gt(id, maxId)) {
+                                ok := 0
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// @dev `threshold == 0` means "no guardians" and requires an empty list. Otherwise the list
     ///      holds 1..16 unique ERC-7913 signers longer than 20 bytes whose 20-byte prefix passes
-    ///      `_isVerifier`, `threshold <= length`, and `delay >= MIN_RECOVERY_DELAY`. Duplicates are
+    ///      `_isPQVerifier`, `threshold <= length`, and `delay >= MIN_RECOVERY_DELAY`. Duplicates are
     ///      rejected so no signer counts twice.
     function _isValidGuardianSet(bytes[] memory guardians, uint8 threshold, uint32 delay) private view returns (bool) {
         uint256 n = guardians.length;
@@ -401,7 +529,7 @@ contract QuantumValidator is IERC7579Validator, EIP712 {
             // casting to 'bytes20' is intentional: it takes the 20-byte verifier prefix of `verifier ‖ key`,
             // exactly as SignatureChecker does
             // forge-lint: disable-next-line(unsafe-typecast)
-            if (!_isVerifier(address(bytes20(guardians[i])))) return false;
+            if (!_isPQVerifier(address(bytes20(guardians[i])))) return false;
             bytes32 id = keccak256(guardians[i]);
             for (uint256 j = 0; j < i; ++j) {
                 if (ids[j] == id) return false;

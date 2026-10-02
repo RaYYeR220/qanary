@@ -22,8 +22,10 @@ It exposes the same interface as the Stylus `mldsa44-verifier` (`IQanaryPQVerifi
 
 The validator modules call whatever ERC-7913 verifier they are configured with, so an account on
 Arbitrum One installs `QuantumValidator` with this verifier and its KeyStore pointer. When Stylus
-activations resume, the account moves to the Stylus verifier with `rotateKey(stylusVerifier, keyPtr)`
-and keeps the same pointer.
+activations resume, the account moves to the Stylus verifier with
+`rotateKey(stylusVerifier, keyPtr, proof)`, where `proof` is the key's signature over
+`rotationDigest(account, stylusVerifier, keyPtr)`, and keeps the same pointer. The same verifier is a
+good home for guardian keys: recovery then does not depend on any Stylus program being active.
 
 ## How it works
 

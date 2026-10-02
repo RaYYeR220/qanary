@@ -661,7 +661,10 @@ contract HotTierExecutorTest is Test {
         ex.setAllowed(address(v), IERC7579Module.onUninstall.selector, true);
         vm.stopPrank();
         bytes memory err = abi.encodeWithSelector(HotTierExecutor.ForbiddenTarget.selector, address(v));
-        _expectHotRevert(_call(address(v), 0, abi.encodeCall(QuantumValidator.rotateKey, (address(mv), newPtr))), err);
+        bytes memory proof = abi.encode(abi.encodePacked(newPtr), v.rotationDigest(address(acct), address(mv), newPtr));
+        _expectHotRevert(
+            _call(address(v), 0, abi.encodeCall(QuantumValidator.rotateKey, (address(mv), newPtr, proof))), err
+        );
         _expectHotRevert(_call(address(v), 0, abi.encodeCall(IERC7579Module.onUninstall, (""))), err);
         _expectHotRevert(_call(address(v), 1, ""), err);
         assertEq(v.configOf(address(acct)).keyPtr, keyPtr);
