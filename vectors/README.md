@@ -26,6 +26,15 @@ message) triples.
 A verifying key and signature from `fn-dsa-vrfy` 0.4.0's own test suite,
 covering FN-DSA-512 with the domain context `"context"` over the message `"message"`; verified through `fndsa512_verify_ctx`.
 
+## `fndsa512.{pk,msg,sig}`
+
+FN-DSA-512 verifying key and signature produced with `fn-dsa` 0.4.0 (keygen and
+signing driven by a SHAKE256 stream seeded with the ASCII string
+`pq-spike fn-dsa fixture seed`), empty domain context (`DOMAIN_NONE`), raw
+message (`HASH_ID_RAW`) over the 32-byte message `keccak256("pq-spike")`. This
+is the context-free path the on-chain `verify(1 ‖ pk, hash, sig)` uses; the
+Stylus integration suite (`contracts/evm/test/stylus`) checks it end to end.
+
 ## `falcon512_compressed.{pk,msg,sig}`
 
 Falcon-512 detached compressed signature (header 0x39, variable length) produced by `@noble/post-quantum` 0.7.1 `falcon512` (non-hedged signing, key from SHAKE256-expanded 32-byte seed `90290baa7b7633551de99dcbade926845ec04639d48c5f428c4db10238df56b6`, message `e7f44d3fbddc9cf1c0b0eddb3bee00ed60f47ff2c56d1a21b4080fb0b29d65d0`). The tests also verify its 666-byte zero-padded form.
