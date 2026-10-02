@@ -2,7 +2,7 @@
 //! (upstream KAT, sign/verify round trips, negative controls).
 mod common;
 use common::*;
-use qanary_pq::{falcon512_verify, falcon_r3, fndsa512_verify, VerifyError};
+use qanary_pq::{falcon512_verify, falcon_r3, fndsa512_verify, fndsa512_verify_ctx, VerifyError};
 
 // ---------------------------------------------------------------- Falcon-512 round-3
 
@@ -121,18 +121,20 @@ fn falcon512_devsign_fixture_verifies() {
 // ---------------------------------------------------------------- FN-DSA-512
 
 #[test]
-fn fndsa512_upstream_kat_context_mismatch_rejected() {
-    // Vector embedded in fn-dsa-vrfy 0.4.0's own test suite, signed over ctx="context",
-    // msg="message". `fndsa512_verify` hardcodes the empty context, so this signature
-    // (valid under a non-empty context) must be rejected rather than accepted.
+fn fndsa512_upstream_kat() {
+    // Vector embedded in fn-dsa-vrfy 0.4.0 own test suite, signed over ctx="context", msg="message".
     let vk = read_hex("fndsa/kat_512_vk.hex");
     let sig = read_hex("fndsa/kat_512_sig.hex");
+    assert_eq!(fndsa512_verify_ctx(&vk, b"message", b"context", &sig), Ok(true));
+    // wrong message / wrong or empty context / tampered signature / bad lengths
+    assert_eq!(fndsa512_verify_ctx(&vk, b"messagf", b"context", &sig), Ok(false));
+    assert_eq!(fndsa512_verify_ctx(&vk, b"message", b"contexu", &sig), Ok(false));
     assert_eq!(fndsa512_verify(&vk, b"message", &sig), Ok(false));
-    assert_eq!(fndsa512_verify(&vk, b"messagf", &sig), Ok(false));
-    // 1024-key material must be rejected by length before any hashing happens.
-    let mut short_vk = vk.clone();
-    short_vk.truncate(vk.len() - 1);
-    assert!(matches!(fndsa512_verify(&short_vk, b"message", &sig), Err(VerifyError::KeyLength { .. })));
+    let mut bad = sig.clone();
+    bad[100] ^= 1;
+    assert_eq!(fndsa512_verify_ctx(&vk, b"message", b"context", &bad), Ok(false));
+    assert!(matches!(fndsa512_verify_ctx(&vk[..vk.len() - 1], b"message", b"context", &sig), Err(VerifyError::KeyLength { .. })));
+    assert_eq!(fndsa512_verify_ctx(&vk, b"message", &[0u8; 256], &sig), Err(VerifyError::ContextTooLong));
 }
 
 #[test]

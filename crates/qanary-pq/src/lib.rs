@@ -10,8 +10,8 @@
 //!                   `fn-dsa-comm`'s mod-q NTT arithmetic plus round-3 codecs and
 //!                   hash-to-point.
 //!
-//! Every verifier here uses a fixed, empty context / domain-separation string: none of
-//! the functions below take a context argument.
+//! The plain `*_verify` functions use an empty context / domain-separation string; the
+//! `*_verify_ctx` variants take an explicit context of at most 255 bytes.
 #![no_std]
 #![allow(dead_code)]
 
@@ -64,6 +64,8 @@ pub enum VerifyError {
     /// Public key has the right length but does not decode (bad header, coefficient
     /// out of range, ...).
     KeyDecode,
+    /// Context string longer than 255 bytes.
+    ContextTooLong,
     /// Scheme id not compiled into this build.
     UnsupportedScheme,
 }
@@ -89,6 +91,12 @@ pub fn verify(scheme: Scheme, pk: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool,
 
 #[cfg(feature = "fndsa512")]
 pub fn fndsa512_verify(pk: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool, VerifyError> {
+    fndsa512_verify_ctx(pk, msg, b"", sig)
+}
+
+/// Same as [`fndsa512_verify`] with an explicit domain context (at most 255 bytes).
+#[cfg(feature = "fndsa512")]
+pub fn fndsa512_verify_ctx(pk: &[u8], msg: &[u8], ctx: &[u8], sig: &[u8]) -> Result<bool, VerifyError> {
     use fn_dsa_vrfy::{DomainContext, VerifyingKey, VerifyingKey512, HASH_ID_RAW};
     if pk.len() != FNDSA512_PK_LEN {
         return Err(VerifyError::KeyLength { expected: FNDSA512_PK_LEN, got: pk.len() });
@@ -96,8 +104,11 @@ pub fn fndsa512_verify(pk: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool, Verify
     if sig.len() != FNDSA512_SIG_LEN {
         return Err(VerifyError::SigLength { expected: FNDSA512_SIG_LEN, got: sig.len() });
     }
+    if ctx.len() > 255 {
+        return Err(VerifyError::ContextTooLong);
+    }
     let vk = VerifyingKey512::decode(pk).ok_or(VerifyError::KeyDecode)?;
-    Ok(vk.verify(sig, &DomainContext(b""), &HASH_ID_RAW, msg))
+    Ok(vk.verify(sig, &DomainContext(ctx), &HASH_ID_RAW, msg))
 }
 
 // ---------------------------------------------------------------- Falcon-512 (round 3)
@@ -111,21 +122,29 @@ pub fn falcon512_verify(pk: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool, Verif
 
 #[cfg(any(feature = "mldsa44", feature = "mldsa65"))]
 macro_rules! fips204_verify_fn {
-    ($name:ident, $module:ident, $pklen:expr, $siglen:expr) => {
+    ($name:ident, $name_ctx:ident, $module:ident, $pklen:expr, $siglen:expr) => {
         /// FIPS 204 ML-DSA pure verify, empty context.
         pub fn $name(pk: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool, VerifyError> {
+            $name_ctx(pk, msg, b"", sig)
+        }
+
+        /// FIPS 204 ML-DSA pure verify with an explicit context (at most 255 bytes).
+        pub fn $name_ctx(pk: &[u8], msg: &[u8], ctx: &[u8], sig: &[u8]) -> Result<bool, VerifyError> {
             use fips204::traits::{SerDes, Verifier};
             let pkb = <[u8; $pklen]>::try_from(pk)
                 .map_err(|_| VerifyError::KeyLength { expected: $pklen, got: pk.len() })?;
             let sigb = <[u8; $siglen]>::try_from(sig)
                 .map_err(|_| VerifyError::SigLength { expected: $siglen, got: sig.len() })?;
+            if ctx.len() > 255 {
+                return Err(VerifyError::ContextTooLong);
+            }
             let key = fips204::$module::PublicKey::try_from_bytes(pkb).map_err(|_| VerifyError::KeyDecode)?;
-            Ok(key.verify(msg, &sigb, b""))
+            Ok(key.verify(msg, &sigb, ctx))
         }
     };
 }
 
 #[cfg(feature = "mldsa44")]
-fips204_verify_fn!(mldsa44_verify, ml_dsa_44, MLDSA44_PK_LEN, MLDSA44_SIG_LEN);
+fips204_verify_fn!(mldsa44_verify, mldsa44_verify_ctx, ml_dsa_44, MLDSA44_PK_LEN, MLDSA44_SIG_LEN);
 #[cfg(feature = "mldsa65")]
-fips204_verify_fn!(mldsa65_verify, ml_dsa_65, MLDSA65_PK_LEN, MLDSA65_SIG_LEN);
+fips204_verify_fn!(mldsa65_verify, mldsa65_verify_ctx, ml_dsa_65, MLDSA65_PK_LEN, MLDSA65_SIG_LEN);

@@ -13,12 +13,7 @@ Each file keeps only the `signatureInterface: "external"`, `preHash: "pure"`
 test group for its parameter set, with the original `tcId`, `pk`, `message`,
 `context`, `signature`, `testPassed` and `reason` fields untouched.
 
-`qanary_pq::mldsa44_verify` / `mldsa65_verify` take no context argument (the
-context is fixed to the empty string), so a vector only exercises the
-positive path when its `context` field is also empty; a vector signed under
-a non-empty context is expected to fail verification through this crate's
-API regardless of its original `testPassed` value. The test suite accounts
-for this when deriving the expected result per vector.
+Verified through `mldsa44_verify_ctx` / `mldsa65_verify_ctx` with each vector's own context; every result must equal `testPassed`.
 
 ## `falcon-r3/falcon512-KAT.rsp`
 
@@ -29,10 +24,7 @@ message) triples.
 ## `fndsa/kat_512_vk.hex`, `fndsa/kat_512_sig.hex`
 
 A verifying key and signature from `fn-dsa-vrfy` 0.4.0's own test suite,
-covering FN-DSA-512 with a non-empty domain context (`"context"`) over the
-message `"message"`. Used to confirm that this crate's context handling
-rejects a signature produced under a context other than the empty one it
-hardcodes.
+covering FN-DSA-512 with the domain context `"context"` over the message `"message"`; verified through `fndsa512_verify_ctx`.
 
 ## `mldsa44.{pk,msg,sig}`, `mldsa44_devsign.{pk,msg,sig}`, `mldsa65.{pk,msg,sig}`, `falcon512_devsign.{pk,msg,sig}`
 

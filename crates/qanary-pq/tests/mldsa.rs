@@ -9,35 +9,40 @@ fn h(v: &Value) -> Vec<u8> {
     hex::decode(v.as_str().unwrap()).unwrap()
 }
 
-/// `mldsa44_verify` / `mldsa65_verify` take no context argument (it is fixed to the
-/// empty string), so an ACVP vector only predicts our result directly when its own
-/// `context` field is also empty; a vector signed under a non-empty context is
-/// expected to fail through this crate's API regardless of its original `testPassed`.
-fn run_acvp_sigver(path: std::path::PathBuf, verify: fn(&[u8], &[u8], &[u8]) -> Result<bool, VerifyError>) {
+type CtxVerify = fn(&[u8], &[u8], &[u8], &[u8]) -> Result<bool, VerifyError>;
+
+/// Runs every vector in the file (any context) and requires the result to equal `testPassed`.
+fn run_acvp_sigver(path: std::path::PathBuf, verify: CtxVerify) {
     let d: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let tests = d["tests"].as_array().unwrap();
-    let mut processed = 0usize;
+    let (mut processed, mut pass, mut fail) = (0usize, 0usize, 0usize);
     for t in tests {
-        let pk = h(&t["pk"]);
-        let msg = h(&t["message"]);
-        let sig = h(&t["signature"]);
-        let ctx_empty = t["context"].as_str().unwrap_or("").is_empty();
-        let expect_true = ctx_empty && t["testPassed"].as_bool().unwrap();
-        let got = no_panic(|| verify(&pk, &msg, &sig)).unwrap_or(false);
-        assert_eq!(got, expect_true, "tcId={}", t["tcId"]);
+        let (pk, msg, ctx, sig) = (h(&t["pk"]), h(&t["message"]), h(&t["context"]), h(&t["signature"]));
+        let expected = t["testPassed"].as_bool().unwrap();
+        let got = no_panic(|| verify(&pk, &msg, &ctx, &sig)).unwrap_or(false);
+        assert_eq!(got, expected, "tcId={}", t["tcId"]);
         processed += 1;
+        if expected { pass += 1 } else { fail += 1 }
     }
     assert_eq!(processed, tests.len());
+    println!("ACVP {}: total={processed} expected-pass={pass} expected-fail={fail}", path.display());
 }
 
 #[test]
 fn acvp_sigver_mldsa44_pure() {
-    run_acvp_sigver(vectors_dir().join("mldsa/sigver-44.json"), mldsa44_verify);
+    run_acvp_sigver(vectors_dir().join("mldsa/sigver-44.json"), mldsa44_verify_ctx);
 }
 
 #[test]
 fn acvp_sigver_mldsa65_pure() {
-    run_acvp_sigver(vectors_dir().join("mldsa/sigver-65.json"), mldsa65_verify);
+    run_acvp_sigver(vectors_dir().join("mldsa/sigver-65.json"), mldsa65_verify_ctx);
+}
+
+#[test]
+fn context_too_long_rejected() {
+    let (pk, msg, sig) = common::fixture("mldsa44");
+    assert_eq!(mldsa44_verify_ctx(&pk, &msg, &[0u8; 256], &sig), Err(VerifyError::ContextTooLong));
+    assert_eq!(mldsa44_verify_ctx(&pk, &msg, &[0u8; 255], &sig), Ok(false));
 }
 
 #[test]

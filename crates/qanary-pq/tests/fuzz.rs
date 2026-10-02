@@ -2,7 +2,7 @@
 //! valid signature) and a differential check against an independent ML-DSA implementation.
 mod common;
 use common::*;
-use ml_dsa::{ExpandedSigningKey as SigningKey, MlDsa44, B32};
+use ml_dsa::{ExpandedSigningKey as SigningKey, MlDsa44, MlDsa65, B32};
 use proptest::collection::vec as pvec;
 use proptest::prelude::*;
 use qanary_pq::*;
@@ -81,32 +81,31 @@ fn mutate_fndsa512_sig_never_accepts() {
 
 // ---------------------------------------------------------------- differential (ml-dsa vs fips204)
 
-/// For 50 seed-derived keys, a signature produced by the independent RustCrypto `ml-dsa`
-/// implementation must verify through our fips204-backed `mldsa44_verify`.
-#[test]
-fn differential_ml_dsa_signature_verifies_with_fips204_backend() {
-    let mut rng = XorShift(0x5EED);
-    let mut ok = 0;
-    for i in 0..50u8 {
-        let mut seed = [0u8; 32];
-        seed[0] = i;
-        for b in seed.iter_mut().skip(1) {
-            *b = rng.next() as u8;
+macro_rules! differential {
+    ($name:ident, $P:ty, $verify:ident, $fixture:expr) => {
+        /// For 50 seed-derived keys, a signature from the independent RustCrypto `ml-dsa`
+        /// implementation must verify through our fips204-backed verifier.
+        #[test]
+        fn $name() {
+            let mut rng = XorShift(0x5EED);
+            for i in 0..50u8 {
+                let mut seed = [0u8; 32];
+                seed[0] = i;
+                for b in seed.iter_mut().skip(1) {
+                    *b = rng.next() as u8;
+                }
+                let sk = SigningKey::<$P>::from_seed(&B32::from(seed));
+                let pk = sk.verifying_key().encode();
+                let msg = rng.bytes(32);
+                let sig = sk.sign_deterministic(&msg, b"").unwrap().encode();
+                assert_eq!($verify(&pk, &msg, &sig), Ok(true), "seed {i}");
+            }
+            // devsign (noble) fixture must verify too
+            let (pk, msg, sig) = common::fixture($fixture);
+            assert_eq!($verify(&pk, &msg, &sig), Ok(true));
         }
-        let sk = SigningKey::<MlDsa44>::from_seed(&B32::from(seed));
-        let pk = sk.verifying_key().encode();
-        let msg = rng.bytes(32);
-        let sig = sk.sign_deterministic(&msg, b"").unwrap().encode();
-        assert_eq!(mldsa44_verify(&pk, &msg, &sig), Ok(true), "seed {i}");
-        ok += 1;
-    }
-    println!("differential ml-dsa -> fips204 verified = {ok}/50");
-    assert_eq!(ok, 50);
+    };
 }
 
-/// A devsign (noble `@noble/post-quantum`) signature must also verify.
-#[test]
-fn differential_devsign_signature_verifies_with_fips204_backend() {
-    let (pk, msg, sig) = common::fixture("mldsa44_devsign");
-    assert_eq!(mldsa44_verify(&pk, &msg, &sig), Ok(true));
-}
+differential!(differential_mldsa44_ml_dsa_and_devsign, MlDsa44, mldsa44_verify, "mldsa44_devsign");
+differential!(differential_mldsa65_ml_dsa_and_devsign, MlDsa65, mldsa65_verify, "mldsa65");
