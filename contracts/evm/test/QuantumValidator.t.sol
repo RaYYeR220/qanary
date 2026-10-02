@@ -7,6 +7,7 @@ import {MODULE_TYPE_VALIDATOR, MODULE_TYPE_EXECUTOR} from "@openzeppelin/contrac
 import {QuantumValidator} from "../src/QuantumValidator.sol";
 import {KeyStore} from "../src/KeyStore.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
+import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 
 contract QuantumValidatorTest is Test {
     bytes4 internal constant ERC1271_MAGIC = 0x1626ba7e;
@@ -20,6 +21,8 @@ contract QuantumValidatorTest is Test {
     address internal constant ACCOUNT = address(0xA11CE);
     address internal constant ACCOUNT_B = address(0xB0B);
     address internal constant STRANGER = address(0xCAFE);
+    /// @dev Codeless address well above the precompile range.
+    address internal constant EOA_VERIFIER = address(0xE0A00);
 
     address internal keyPtr;
     address internal keyPtr2;
@@ -105,6 +108,30 @@ contract QuantumValidatorTest is Test {
                 address(qv)
             )
         );
+    }
+
+    /// @dev ERC-7562 "associated" storage of `account`: the slot `account` itself, or
+    ///      `keccak256(account ‖ x) + n` with `n <= 128`. `x` ranges over this contract's top-level slots.
+    function _isAssociated(address account, bytes32 slot) internal pure returns (bool) {
+        if (uint256(slot) == uint256(uint160(account))) return true;
+        for (uint256 s = 0; s < 16; ++s) {
+            uint256 base = uint256(keccak256(abi.encode(account, s)));
+            if (uint256(slot) >= base && uint256(slot) - base <= 128) return true;
+        }
+        return false;
+    }
+
+    function _assertAllAssociated(address account, bytes32[] memory slots) internal pure {
+        for (uint256 i = 0; i < slots.length; ++i) {
+            assertTrue(_isAssociated(account, slots[i]), "slot not associated with account");
+        }
+    }
+
+    function _expectInvalidKey(address verifier, address ptr) internal {
+        bytes memory data = _installData(verifier, ptr, new bytes[](0), 0, 0);
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyConfig.selector);
+        qv.onInstall(data);
     }
 
     function _expectInvalidGuardians(bytes[] memory gs, uint8 threshold, uint32 delay) internal {
@@ -716,6 +743,168 @@ contract QuantumValidatorTest is Test {
         qv.onUninstall("");
         assertTrue(qv.isInitialized(ACCOUNT));
         assertFalse(qv.isInitialized(ACCOUNT_B));
+    }
+
+    // ---------------------------------------------------------------- verifier must be real code
+
+    /// @dev Why codeless/precompile verifiers are dangerous: the identity precompile echoes the
+    ///      ERC-7913 calldata, whose first word is `verify.selector ‖ 0…0`, i.e. the magic value.
+    function test_identityPrecompileWouldAcceptAnySignature() public view {
+        assertTrue(SignatureChecker.isValidSignatureNow(abi.encodePacked(address(4), keyPtr), keccak256("x"), ""));
+    }
+
+    function test_onInstall_identityPrecompileVerifier_reverts() public {
+        _expectInvalidKey(address(4), keyPtr);
+    }
+
+    function test_onInstall_eoaVerifier_reverts() public {
+        _expectInvalidKey(EOA_VERIFIER, keyPtr);
+    }
+
+    function test_onInstall_precompileRangeVerifierWithCode_reverts() public {
+        vm.etch(address(0xff), address(mv).code);
+        _expectInvalidKey(address(0xff), keyPtr);
+        vm.etch(address(0xffff), address(mv).code);
+        _expectInvalidKey(address(0xffff), keyPtr);
+    }
+
+    function test_onInstall_verifierJustAbovePrecompileRange_accepted() public {
+        vm.etch(address(0x10000), address(mv).code);
+        bytes memory data = _installData(address(0x10000), keyPtr, new bytes[](0), 0, 0);
+        vm.prank(ACCOUNT);
+        qv.onInstall(data);
+        assertEq(qv.configOf(ACCOUNT).verifier, address(0x10000));
+    }
+
+    function test_rotateKey_codelessVerifier_reverts() public {
+        _install(ACCOUNT, keyPtr);
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyConfig.selector);
+        qv.rotateKey(address(4), keyPtr2);
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyConfig.selector);
+        qv.rotateKey(EOA_VERIFIER, keyPtr2);
+    }
+
+    function test_proposeRecovery_codelessVerifier_reverts() public {
+        _installWithGuardians(ACCOUNT);
+        bytes32 d = qv.recoveryDigest(ACCOUNT, address(4), keyPtr2);
+        bytes[] memory sigs = new bytes[](3);
+        sigs[0] = abi.encode(guardianKeys[0], d);
+        sigs[1] = abi.encode(guardianKeys[1], d);
+        vm.expectRevert(QuantumValidator.InvalidKeyConfig.selector);
+        qv.proposeRecovery(ACCOUNT, address(4), keyPtr2, sigs);
+    }
+
+    function test_onInstall_guardianWithPrecompilePrefix_reverts() public {
+        bytes[] memory gs = new bytes[](2);
+        gs[0] = guardians[0];
+        gs[1] = abi.encodePacked(address(4), "guardian-key");
+        _expectInvalidGuardians(gs, 1, DELAY);
+    }
+
+    function test_onInstall_guardianWithCodelessVerifier_reverts() public {
+        bytes[] memory gs = new bytes[](2);
+        gs[0] = guardians[0];
+        gs[1] = abi.encodePacked(EOA_VERIFIER, "guardian-key");
+        _expectInvalidGuardians(gs, 1, DELAY);
+    }
+
+    function test_setGuardians_guardianWithPrecompilePrefix_reverts() public {
+        _install(ACCOUNT, keyPtr);
+        bytes[] memory gs = new bytes[](1);
+        gs[0] = abi.encodePacked(address(4), "guardian-key");
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidGuardianConfig.selector);
+        qv.setGuardians(gs, 1, DELAY);
+    }
+
+    // ---------------------------------------------------------------- stale approvals die
+
+    function test_rotateKey_invalidatesOutstandingApprovals() public {
+        _installWithGuardians(ACCOUNT);
+        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false); // collected, not submitted
+
+        vm.prank(ACCOUNT);
+        qv.rotateKey(address(mv), keyPtr3);
+
+        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+    }
+
+    function test_setGuardians_invalidatesOutstandingApprovals() public {
+        _installWithGuardians(ACCOUNT);
+        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
+
+        vm.prank(ACCOUNT);
+        qv.setGuardians(guardians, 2, DELAY); // same set, re-confirmed
+
+        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+    }
+
+    function test_reinstall_invalidatesOutstandingApprovals() public {
+        _installWithGuardians(ACCOUNT);
+        bytes[] memory sigs = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
+
+        vm.prank(ACCOUNT);
+        qv.onUninstall("");
+        _installWithGuardians(ACCOUNT);
+
+        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, sigs);
+    }
+
+    function test_cancelRecovery_invalidatesOutstandingApprovals() public {
+        _installWithGuardians(ACCOUNT);
+        bytes[] memory first = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, first);
+        bytes[] memory second = _guardianSigs(ACCOUNT, keyPtr3, true, true, false); // queued follow-up
+
+        vm.prank(ACCOUNT);
+        qv.cancelRecovery();
+
+        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr3, second);
+    }
+
+    function test_executeRecovery_invalidatesOutstandingApprovals() public {
+        _installWithGuardians(ACCOUNT);
+        bytes[] memory first = _guardianSigs(ACCOUNT, keyPtr2, true, true, false);
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr2, first);
+        bytes[] memory second = _guardianSigs(ACCOUNT, keyPtr3, true, true, false);
+
+        vm.warp(qv.pendingRecoveryOf(ACCOUNT).eta);
+        qv.executeRecovery(ACCOUNT);
+
+        vm.expectRevert(abi.encodeWithSelector(QuantumValidator.InsufficientGuardianSignatures.selector, 0, 2));
+        qv.proposeRecovery(ACCOUNT, address(mv), keyPtr3, second);
+    }
+
+    // ---------------------------------------------------------------- ERC-7562 storage
+
+    function test_onInstall_withoutGuardians_touchesOnlyAssociatedStorage() public {
+        bytes memory data = _installData(address(mv), keyPtr, new bytes[](0), 0, 0);
+        vm.record();
+        vm.prank(ACCOUNT);
+        qv.onInstall(data);
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(qv));
+        assertGt(writes.length, 0);
+        _assertAllAssociated(ACCOUNT, reads);
+        _assertAllAssociated(ACCOUNT, writes);
+    }
+
+    function test_validateUserOp_touchesOnlyAssociatedStorage() public {
+        _install(ACCOUNT, keyPtr);
+        bytes32 h = keccak256("user-op");
+        PackedUserOperation memory op = _op(ACCOUNT, _sig(keyPtr, h));
+        vm.record();
+        vm.prank(ACCOUNT);
+        assertEq(qv.validateUserOp(op, h), 0);
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(qv));
+        assertGt(reads.length, 0);
+        assertEq(writes.length, 0);
+        _assertAllAssociated(ACCOUNT, reads);
     }
 
     // ---------------------------------------------------------------- fuzz
