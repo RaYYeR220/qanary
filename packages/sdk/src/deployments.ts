@@ -38,7 +38,10 @@ export type Deployment = {
   nativeSymbol: string;
   entryPoint: Address;
   kernel: KernelAddresses;
-  /** ERC-7913 verifier per post-quantum scheme (Stylus programs). */
+  /**
+   * ERC-7913 verifier per post-quantum scheme: the Stylus programs, or for ML-DSA-44 the Solidity
+   * fallback (`evm.mldsa44SolidityVerifier`) where no Stylus program is recorded.
+   */
   verifiers: Partial<Record<Scheme, Address>>;
   ladderVerifier?: Address;
   /** Tokens read by default by the exposure scanner. */
@@ -65,9 +68,9 @@ function optionalAddress(value: unknown, where: string): Address | undefined {
   return getAddress(value);
 }
 
-/** A Stylus entry is `{ "address": "0x…", … }`; a bare address string is accepted too. */
+/** A contract entry is `{ "address": "0x…", … }`; a bare address string is accepted too. */
 function stylusAddress(value: unknown, where: string): Address | undefined {
-  return optionalAddress(isRecord(value) ? value.address : value, `${where}.address`);
+  return isRecord(value) ? optionalAddress(value.address, `${where}.address`) : optionalAddress(value, where);
 }
 
 /**
@@ -113,9 +116,12 @@ export function parseDeployment(chainId: number, json: unknown): Deployment {
 
   const evm = isRecord(json.evm) ? json.evm : {};
   for (const name of CORE_CONTRACTS) {
-    const address = optionalAddress(evm[name], `${network}.evm.${name}`);
+    const address = stylusAddress(evm[name], `${network}.evm.${name}`);
     if (address) d[name] = address;
   }
+  // Chains without Stylus activations run the Solidity ML-DSA-44 verifier instead.
+  const fallback = stylusAddress(evm.mldsa44SolidityVerifier, `${network}.evm.mldsa44SolidityVerifier`);
+  if (fallback && !d.verifiers.mldsa44) d.verifiers.mldsa44 = fallback;
   if (isRecord(json.e2e)) d.e2e = json.e2e;
   return d;
 }
