@@ -51,6 +51,20 @@ export const EVM_LABELS: Record<string, string> = {
   ladderUnavailable: 'Ladder stand-in (fails closed)',
 };
 
+/**
+ * Contracts that stand in for Stylus programs where activations are paused: the Solidity ML-DSA-44
+ * verifier and its parts, and the ladder stand-in that fails closed. A network that runs the
+ * Stylus programs never deploys them.
+ */
+export const STYLUS_STAND_INS: ReadonlySet<string> = new Set([
+  'mldsa44SolidityVerifier',
+  'solidityMldsa44Verifier',
+  'mldsa44VerifierCore',
+  'mldsa44ExpandedKeyStore',
+  'keccakF1600Helper',
+  'ladderUnavailable',
+]);
+
 /** Where the Solidity ML-DSA-44 verifier may be recorded, in order of preference. */
 export const FALLBACK_VERIFIER_PATHS = [
   ['evm', 'mldsa44SolidityVerifier'],

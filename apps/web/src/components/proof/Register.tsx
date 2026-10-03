@@ -2,6 +2,7 @@ import {
   NETWORKS,
   STYLUS_KEYS,
   STYLUS_LABELS,
+  STYLUS_STAND_INS,
   shortHex,
   type Contract,
   type NetworkRecord,
@@ -119,13 +120,19 @@ export function Register({ records }: { records: NetworkRecord[] }) {
                 <tr key={key}>
                   <th scope="row">
                     <span className={styles.name}>{label}</span>
-                    <span className={styles.detail}>Solidity</span>
+                    <span className={styles.detail}>{STYLUS_STAND_INS.has(key) ? 'Solidity, where Stylus activations are paused' : 'Solidity'}</span>
                   </th>
                   {NETWORKS.map((n) => {
                     const c = byNet.get(n.key)?.evm.find((x) => x.key === key);
                     return (
                       <td key={n.key} data-network={n.name}>
-                        {c ? <Cell c={c} /> : <span className={styles.pending}>deploying</span>}
+                        {c ? (
+                          <Cell c={c} />
+                        ) : STYLUS_STAND_INS.has(key) && n.stylus !== 'paused' ? (
+                          <span className={styles.pending}>not used on this network</span>
+                        ) : (
+                          <span className={styles.pending}>deploying</span>
+                        )}
                       </td>
                     );
                   })}
