@@ -82,12 +82,12 @@ Each suite runs with one command from the repository root after `git submodule u
 |---|---|---|
 | Rust cores and Stylus contracts | `cargo test --release --workspace` | 81 passed |
 | Solidity modules and fallback verifier | `cd contracts/evm && forge test` | 292 passed, 41 skipped |
-| TypeScript SDK | `pnpm --filter @qanary/sdk test` | 161 passed, 3 skipped |
+| TypeScript SDK | `pnpm --filter @qanary/sdk test` | 163 passed, 3 skipped |
 | Arbitrum One fork (real Kernel, Safe, EntryPoint, USDG) | `cd contracts/evm && ARB_ONE_RPC=your_archive_rpc_url forge test --match-path 'test/fork/*'` | 22 passed at block 511,050,000 |
 | Stylus WASM inside Foundry | `ARBOS_FORGE=path_to_arbos_forge scripts/stylus-test.sh` | 8 passed, 11 skipped |
 | Proof tables match the deployment records | `pnpm proof --check` | exit code 0 |
 
-The 41 skipped Foundry tests are the fork suite (22) and the Stylus suite (19), which need the settings shown in their own rows. `forge test` runs with FFI enabled: five fallback tests call `node scripts/devsign/devsign.mjs` to sign live with `@noble/post-quantum`. Run `npm ci` in `scripts/devsign` once, or they skip and the count reads 287 passed, 46 skipped. `pnpm -r test` runs the SDK and the web app tests (14 more). The SDK skips its live AWS KMS and live Arbitrum One scanner tests unless `QANARY_KMS_KEY_ID` or `QANARY_LIVE=1` is set. The fork suite needs an archive RPC for block 511,050,000; public pruned RPCs fail. The 11 skipped Stylus tests read keys from KeyStore pointers, which arbos-forge v0.1.1 overcharges; the live end-to-end run covers that path.
+The 41 skipped Foundry tests are the fork suite (22) and the Stylus suite (19), which need the settings shown in their own rows. `forge test` runs with FFI enabled: five fallback tests call `node scripts/devsign/devsign.mjs` to sign live with `@noble/post-quantum`. Run `npm ci` in `scripts/devsign` once, or they skip and the count reads 287 passed, 46 skipped. `pnpm -r test` runs the SDK and the web app tests (54 more). The SDK skips its live AWS KMS and live Arbitrum One scanner tests unless `QANARY_KMS_KEY_ID` or `QANARY_LIVE=1` is set. The fork suite needs an archive RPC for block 511,050,000; public pruned RPCs fail. The 11 skipped Stylus tests read keys from KeyStore pointers, which arbos-forge v0.1.1 overcharges; the live end-to-end run covers that path.
 
 ## Where each claim is proven
 

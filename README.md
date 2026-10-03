@@ -112,7 +112,7 @@ cargo test --release --workspace        # Rust cores and Stylus contracts
 pnpm install && pnpm -r test            # TypeScript SDK and web app
 ```
 
-On 3 October 2026 these report 81 Rust tests passing; 292 Foundry tests passing with 41 skipped; and 161 SDK tests passing with 3 skipped, plus 14 web app tests passing (`pnpm --filter @qanary/sdk test` runs the SDK alone). The 41 skipped Foundry tests are the Arbitrum One fork suite (22 tests), which needs an archive RPC in `ARB_ONE_RPC`, and the Stylus suite (19 tests), which needs arbos-forge. Five fallback-verifier tests sign live through `scripts/devsign` over Foundry’s FFI; without `npm ci` there they skip, and the count reads 287 passed with 46 skipped. The fork suite last passed 22 of 22 and the Stylus suite 8 with 11 skipped; [JUDGES.md](JUDGES.md) has the command for each optional suite.
+On 3 October 2026 these report 81 Rust tests passing; 292 Foundry tests passing with 41 skipped; and 163 SDK tests passing with 3 skipped, plus 54 web app tests passing (`pnpm --filter @qanary/sdk test` runs the SDK alone). The 41 skipped Foundry tests are the Arbitrum One fork suite (22 tests), which needs an archive RPC in `ARB_ONE_RPC`, and the Stylus suite (19 tests), which needs arbos-forge. Five fallback-verifier tests sign live through `scripts/devsign` over Foundry’s FFI; without `npm ci` there they skip, and the count reads 287 passed with 46 skipped. The fork suite last passed 22 of 22 and the Stylus suite 8 with 11 skipped; [JUDGES.md](JUDGES.md) has the command for each optional suite.
 
 | Variable | Used by | Purpose |
 |---|---|---|
