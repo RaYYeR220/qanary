@@ -96,5 +96,53 @@
         }
       }
     }
+  },
+  "evm": {
+    "keyStore": {
+      "address": "0x12cF4EE4073d5F3E5DE8bFE6e34522cEb46854f6",
+      "deployTx": "0x4611a987cc91ade2b43f003ecfd183cb4ecf44cf18cfe8092d78ec075515c352",
+      "gasUsed": 452984,
+      "costWei": "46060663355840000"
+    },
+    "quantumValidator": {
+      "address": "0x0057Fcac28c7094910D563Ad31E437d78a92036a",
+      "deployTx": "0x83a662a96d012536fccc04e10fc3b6c42a627edf82508e39a3a5fad080737844",
+      "gasUsed": 2430228,
+      "costWei": "247112290469280000"
+    },
+    "hotTierExecutor": {
+      "address": "0xE5A6EFCEAcdBFe96593f01F7770C1163B0C631f3",
+      "deployTx": "0xb4e1bbb147a1a4311fc1aa3d693f33be2ef8120c39c89995bf684170a15b326a",
+      "gasUsed": 4946452,
+      "costWei": "502968891567520000"
+    },
+    "pqSafeOwnerFactory": {
+      "address": "0x4Ce066c253d38bFF3012607B0D3B1B4b8E29ABA3",
+      "deployTx": "0x0e5bba76af71954f43de042f53ff2078c94e60df3a79776b1035a73449977362",
+      "gasUsed": 1248718,
+      "costWei": "126973092701680000"
+    },
+    "qanaryAccountFactory": {
+      "address": "0xdbEEAA8CC79A925b42A5F42f3F1bA81afC132609",
+      "deployTx": "0xff925afb3b695beb2117c4100982af3d1b18b62e61636efd4383c182be5c68fe",
+      "gasUsed": 5734781,
+      "costWei": "583128360075560000"
+    },
+    "canaryRegistry": {
+      "address": "0x4848512a663F59fA23708C1Fa2f1cEA21B888A95",
+      "ladder": "0x7DEAe8711B07004017CcAFd71b64F3b944E8DC4F",
+      "bountyToken": "0x0000000000000000000000000000000000000000",
+      "deployTx": "0xe9f18e0a017f13a122ba54cc70a4db001eaf3cbbd1cffe6d50df7a1e5bd37aa8",
+      "gasUsed": 2120751,
+      "costWei": "215643814952760000"
+    },
+    "drillRegistryFactory": {
+      "address": "0xA523899D17954a5BeE0Ee102124C458942878032",
+      "ladder": "0x7DEAe8711B07004017CcAFd71b64F3b944E8DC4F",
+      "bountyToken": "0x0000000000000000000000000000000000000000",
+      "deployTx": "0x527999314b7514692ada5c45ee3a6bed93bbdae59b9c8d9a6de9cf82f4d34bd7",
+      "gasUsed": 2630247,
+      "costWei": "267450774441720000"
+    }
   }
 }
