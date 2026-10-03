@@ -1,0 +1,83 @@
+.tiers {
+  display: grid;
+  gap: var(--s2);
+}
+
+.tier,
+.send {
+  display: grid;
+  align-content: start;
+  gap: var(--s0);
+  padding: var(--s1);
+  box-shadow: inset 0 0 0 1px var(--rule);
+  min-width: 0;
+}
+
+.bucket {
+  display: grid;
+  gap: var(--s0);
+  justify-items: start;
+  margin: var(--s0) 0 0;
+}
+
+.big {
+  font-family: var(--face-display);
+  font-size: var(--step-3);
+  line-height: 1.1;
+  color: var(--ink-strong);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+.form {
+  display: grid;
+  gap: var(--s0);
+}
+
+.ops {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+.ops th,
+.ops td {
+  padding: 0.45rem 1rem 0.45rem 0;
+  border-bottom: var(--hairline) solid var(--rule);
+  text-align: left;
+}
+
+.ops thead th {
+  font-family: var(--face-text-italic);
+  font-style: italic;
+  font-weight: 400;
+  color: var(--ink-muted);
+}
+
+@media (min-width: 64em) {
+  .tiers {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 40em) {
+  .ops thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .ops tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    padding-block: 0.5rem;
+    border-bottom: var(--hairline) solid var(--rule);
+  }
+
+  .ops td {
+    border: 0;
+    padding: 0.1rem 0;
+  }
+}

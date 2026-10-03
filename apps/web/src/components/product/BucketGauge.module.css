@@ -1,0 +1,64 @@
+.gauge {
+  width: 100%;
+  max-width: 22rem;
+  height: auto;
+  overflow: visible;
+}
+
+.ring {
+  fill: none;
+  stroke: var(--rule-strong);
+  stroke-width: 0.8;
+}
+
+.cut {
+  fill: none;
+  stroke: var(--canary);
+  stroke-width: 1.15;
+  stroke-linecap: round;
+}
+
+.hatch {
+  stroke: var(--rust);
+  stroke-width: 1.1;
+}
+
+.withheld {
+  stroke: var(--rust);
+  stroke-width: 0.8;
+}
+
+.tick {
+  stroke: var(--ink-muted);
+  stroke-width: 0.8;
+}
+
+.tickLong {
+  stroke: var(--ink);
+  stroke-width: 1.4;
+}
+
+.label {
+  fill: var(--ink-muted);
+  font-family: var(--face-text-italic);
+  font-style: italic;
+  font-size: 11px;
+}
+
+.limit {
+  stroke: var(--rust);
+  stroke-width: 2;
+}
+
+.needle {
+  stroke: var(--canary-200);
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition: all var(--t-state) var(--ease);
+}
+
+.hub {
+  fill: var(--canary);
+  stroke: var(--ground);
+  stroke-width: 1.5;
+}
