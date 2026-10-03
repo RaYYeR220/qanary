@@ -40,9 +40,15 @@ export const EVM_LABELS: Record<string, string> = {
   quantumValidator: 'Quantum validator',
   hotTierExecutor: 'Hot-tier executor',
   quantumCanaryRegistry: 'Tripwire registry',
+  canaryRegistry: 'Tripwire registry',
+  drillRegistryFactory: 'Drill registry factory',
   qanaryAccountFactory: 'Account factory',
   pqSafeOwnerFactory: 'Safe owner factory',
   mldsa44SolidityVerifier: 'ML-DSA-44 verifier (Solidity)',
+  mldsa44VerifierCore: 'ML-DSA-44 verifier core (Solidity)',
+  mldsa44ExpandedKeyStore: 'ML-DSA-44 expanded-key store',
+  keccakF1600Helper: 'Keccak-f[1600] helper',
+  ladderUnavailable: 'Ladder stand-in (fails closed)',
 };
 
 export type Hex = `0x${string}`;
@@ -160,7 +166,10 @@ export function parseRecord(network: Network, json: unknown, file = `${network.k
   let e2e: Tx[] = [];
   if (doc.e2e !== undefined) {
     if (!isObject(doc.e2e)) fail('"e2e" must be an object');
-    e2e = txs(doc.e2e as Record<string, unknown>, 'e2e');
+    const record = doc.e2e as Record<string, unknown>;
+    e2e = txs(record, 'e2e');
+    // runs recorded by a script under their own section, e.g. `e2e.sdk`
+    for (const [k, v] of Object.entries(record)) if (isObject(v)) e2e.push(...txs(v, `e2e.${k}`));
   }
   return { network, present: true, stylus, evm, e2e };
 }
