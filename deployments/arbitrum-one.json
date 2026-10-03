@@ -94,5 +94,45 @@
       "0x2a60f282972b7118517bc1948ba0a7fc21281392eefdfc4034dd3214338585a3",
       "0x2699d1cb3db254968fef80225beb05d25acca72d83a4db28ba0e8bf0125cabbb"
     ]
+  },
+  "e2e": {
+    "sdk": {
+      "rootKey": "aws-kms-ml-dsa-44",
+      "rootKeyPointer": "0xdb5CE807C92901e2a08ad2Eb6f231e3123889B5C",
+      "storeKeyTx": "0xc523e78ac3248664fc5d89dc215f3942851df258552b856ef4d4d2e07f33f5b8",
+      "prepareKeyTx": "0x0fb1bbaae742df92c9b2428ff07fdad036a5dd4be7bd3144794ed6b3244d20bd",
+      "kernelIndex": "1791025745689",
+      "kernelAccount": "0xA3d2E874C2643B53b166DCB94073A7AD621BEbEe",
+      "fundAccountTx": "0x1e4c75a813e8de0e7511961c7b1222e7e1ee0ee90d7bde34bac0d6eccf934ece",
+      "pqUserOpHash": "0x70bdc7168839dca3068aa6f86168d7ee8ec6eb4f5229aa704145022714caa364",
+      "pqUserOpTx": "0x0b989fed5457af04e827e254f9afae443d411efeb80baa575c89360fb95d6d0c",
+      "pqTransferUserOpHash": "0xee112444979fb4f15ad6f3f5842551f4c322a5447b2781de6e37db5008da481b",
+      "pqTransferTx": "0xa1f717c83ee25aad554aac6b33fc4e5a868c8e8386d594ec464c9ab6182cd821",
+      "hotKey": "0x6af103367E898049c59BE75b336eE04Bb7CEDdeC",
+      "hotCapWei": "2000000000000",
+      "installHotTierUserOpHash": "0x92e67f3ea4607a40443e9b66a221a9120b8cd398bd0071ff04361f3b1d41fd93",
+      "installHotTierTx": "0xb6c838feb81a0d98f8d746909b4835491b4bc65b9464f88debc53d1ab3defc60",
+      "hotTransferTx": "0x8e9069521f3cdf405b59ad37aaab0d442ce0c61c8ba5575e6b0c141697910a82",
+      "hotOverCapError": "CapExceeded(0x0000000000000000000000000000000000000000, 2000000000001, 1000555555555)",
+      "hotOverCapRevertTx": "0xe2b477f0c523117b83aababbd3cc2d1688105bc1cc5a138428774bee975fd1dd",
+      "tamperedSigError": "FailedOp(0, AA24 signature error)",
+      "tamperedSigRevertTx": "0x601c02aaa9be012cd633c44ac7da30a151febe337f7b22461946b19f9e0ba41b",
+      "drillRegistry": "0xd73Eb697C4762AC8a8ED01dFb6db0C2b8e80B0C0",
+      "drillRegistryTx": "0xbc2fd75b891fc886042b304cdaa70ce8d632fe380ed6812708c2c4e5fbda01fd",
+      "repointHotTierUserOpHash": "0xb55471a43af73f46193c9553876cf8676e8374fb2f196545195cad3d81d7668a",
+      "repointHotTierTx": "0x082ff00cd140d6355058b439cd3f77203e3939502a33c5b7a5d18f51a79a9cd6",
+      "effectiveBpsBeforeTrip": 10000,
+      "ladderL1Error": "LadderUnavailable()",
+      "ladderL1RevertTx": "0x7d453419b345b764ab3d58b8a02f50a9ec2bf4c75493a6bcc6aff6e89e4bf7c4",
+      "drillClaimTx": "0x08f2ff7868afa9b8dd6c04ed91640867b18214e8696a3dd0d2c62b322bd75ceb",
+      "ladderLevelAfterTrip": 3,
+      "effectiveBpsAfterTrip": 0,
+      "postTripError": "ClassicalFamilyBroken(0)",
+      "postTripHotRevertTx": "0xab822abc17b0c02edc4b1396a1b3e2c726fbecede7670d8c6068d48bb8bf0bd6",
+      "erc1271Hash": "0x3f32e8dc1b744dd4630f93ae154d6dd9788ac061922e8fd29c2b44d64c6e1367",
+      "erc1271Result": "0x1626ba7e",
+      "erc1271OtherHashResult": "0xffffffff",
+      "ranAt": "2026-10-03T11:09:43.569Z"
+    }
   }
 }
