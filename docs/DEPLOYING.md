@@ -78,6 +78,7 @@ MAX_SPEND=7 scripts/deploy-stylus.sh https://rpc.apechain.com/http apechain
 DEPLOY_VIA=cast scripts/deploy-stylus.sh https://curtis.rpc.caldera.xyz/http apechain-curtis mldsa44-verifier
 
 # Local Nitro dev node: start it in another terminal first, then use its prefunded key
+# (public, prefunded Nitro dev-node key; never use it on a real network)
 scripts/run-dev-node.sh
 DEPLOYER_PRIVATE_KEY=0xb6b15c8cb491557369f3c7d2c287b053eb229daa9c22138887752191c9520659 \
   scripts/deploy-stylus.sh http://127.0.0.1:8547 devnode

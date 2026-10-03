@@ -3,7 +3,7 @@
 This page lists every claim the Qanary documentation and app make, with the command or link that proves each one, then names the prior work Qanary builds on and the claims it does not make. Each claim carries one tag:
 
 - **REPRODUCIBLE**: run the command on a clone of this repository; it passes or prints the number. Cargo and pnpm commands run from the repository root, Foundry commands from `contracts/evm`
-- **VERIFIED-LIVE**: a public chain or a public primary source shows it; follow the link or run the `cast` call. Every transaction linked here is recorded in `deployments/<network>.json` and listed in [PROOF.md](PROOF.md)
+- **VERIFIED-LIVE**: a public chain or a public primary source shows it; follow the link or run the `cast` call. Every transaction linked here is recorded in `deployments/<network>.json` and listed in [PROOF.md](PROOF.md), except the Security Council pause transaction, which is not a Qanary transaction
 - **MODELED**: computed from measured parts, not measured end to end
 - **NOT-CLAIMED**: Qanary does not claim this; it is listed so nobody reads it in
 
