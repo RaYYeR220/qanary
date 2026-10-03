@@ -116,6 +116,22 @@ describe('deployment records', () => {
     }
   });
 
+  it('describes each live treasury by what the run did to it', () => {
+    const ape = readDeployments().find((x) => x.network.key === 'apechain')!;
+    const [kms, phrase, falcon] = ape.heroes!;
+    // only the first treasury got a hot tier, and the run tripped the drill it follows
+    expect(kms!.hot).toBe('tripped');
+    expect(phrase!.hot).toBe('none');
+    expect(falcon!.hot).toBe('none');
+    // each treasury lists its own steps, and together they are the whole run
+    expect(kms!.steps.some((t) => t.key.startsWith('mnemonic') || t.key.startsWith('falcon'))).toBe(false);
+    expect(phrase!.steps.every((t) => t.key.startsWith('mnemonic'))).toBe(true);
+    expect(falcon!.steps.every((t) => t.key.startsWith('falcon'))).toBe(true);
+    expect(kms!.steps.length + phrase!.steps.length + falcon!.steps.length).toBe(ape.e2e.length);
+    const arb = readDeployments().find((x) => x.network.key === 'arbitrum-one')!;
+    expect(arb.heroes!.map((h) => h.hot)).toEqual(['tripped']);
+  });
+
   it('shortens hex for display', () => {
     expect(shortHex(addr(255))).toBe('0x0000…00ff');
   });

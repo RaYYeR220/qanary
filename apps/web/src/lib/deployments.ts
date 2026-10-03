@@ -61,6 +61,8 @@ export const FALLBACK_VERIFIER_PATHS = [
 export type Hex = `0x${string}`;
 
 export interface Tx {
+  /** The record field it came from, e.g. `pqUserOpTx`. */
+  key: string;
   label: string;
   hash: Hex;
   href: string;
@@ -73,6 +75,10 @@ export interface Hero {
   label: string;
   address: Hex;
   key: string;
+  /** Whether the run gave it a hot tier, and whether the run then tripped the registry that tier follows. */
+  hot: 'none' | 'installed' | 'tripped';
+  /** The run's transactions for this account, in the order recorded. */
+  steps: Tx[];
 }
 
 export interface Contract {
@@ -180,7 +186,7 @@ export function parseRecord(network: Network, json: unknown, file = `${network.k
       .map(([k, v]) => {
         if (typeof v !== 'string' || !HASH.test(v)) fail(`${at}.${k} is not a transaction hash`);
         const error = errorFor(o, k);
-        return { label: txLabel(k), hash: v as Hex, href: `${network.explorer}/tx/${v}`, ...(error ? { error } : {}) };
+        return { key: k, label: txLabel(k), hash: v as Hex, href: `${network.explorer}/tx/${v}`, ...(error ? { error } : {}) };
       });
   const num = (v: unknown, at: string): number | undefined => {
     if (v === undefined) return undefined;
@@ -252,12 +258,25 @@ export function parseRecord(network: Network, json: unknown, file = `${network.k
       if (typeof v !== 'string' || !HASH.test(v)) fail(`e2e.sdk.${k} is not a 32-byte hash`);
       return v as Hex;
     };
-    const kms = opt('kernelAccount');
-    if (kms) heroes.push({ label: 'Treasury with an AWS KMS root key', address: kms, key: 'ML-DSA-44 in an AWS KMS HSM' });
-    const mn = opt('mnemonicKernelAccount');
-    if (mn) heroes.push({ label: 'Treasury from a recovery phrase', address: mn, key: 'ML-DSA-44 from a recovery phrase' });
-    const fa = opt('falconKernelAccount');
-    if (fa) heroes.push({ label: 'Falcon-512 treasury', address: fa, key: 'Falcon-512 from a recovery phrase' });
+    // the run keys each account's records by prefix: none for the first treasury, then `mnemonic…`, `falcon…`
+    const all = txs(sdk, 'e2e.sdk');
+    const prefixes = ['mnemonic', 'falcon'];
+    const stepsOf = (prefix: string) =>
+      all.filter((t) => (prefix ? t.key.startsWith(prefix) : !prefixes.some((p) => t.key.startsWith(p))));
+    const hotOf = (steps: Tx[]): Hero['hot'] => {
+      const has = (k: string) => steps.some((t) => t.key.toLowerCase().endsWith(k.toLowerCase()) && !t.error);
+      if (!has('installHotTierTx')) return 'none';
+      return has('repointHotTierTx') && has('drillClaimTx') ? 'tripped' : 'installed';
+    };
+    const hero = (label: string, account: string, key: string, prefix: string) => {
+      const a = opt(account);
+      if (!a) return;
+      const steps = stepsOf(prefix);
+      heroes.push({ label, address: a, key, hot: hotOf(steps), steps });
+    };
+    hero('Treasury with an AWS KMS root key', 'kernelAccount', 'ML-DSA-44 in an AWS KMS HSM', '');
+    hero('Treasury from a recovery phrase', 'mnemonicKernelAccount', 'ML-DSA-44 from a recovery phrase', 'mnemonic');
+    hero('Falcon-512 treasury', 'falconKernelAccount', 'Falcon-512 from a recovery phrase', 'falcon');
     run = {
       ...(opt('rootKeyPointer') ? { rootKeyPointer: opt('rootKeyPointer')! } : {}),
       ...(hash('pqUserOpHash') ? { pqUserOpHash: hash('pqUserOpHash')! } : {}),
