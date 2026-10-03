@@ -9,8 +9,6 @@
   display: grid;
   gap: var(--s-1);
   max-width: 52rem;
-  padding-bottom: var(--s2);
-  border-bottom: var(--hairline) solid var(--rule);
 }
 
 .plate {
@@ -87,6 +85,7 @@
 /* ---------- actions ---------- */
 
 .button {
+  justify-self: start;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -122,6 +121,7 @@
 }
 
 .quiet {
+  justify-self: start;
   display: inline-flex;
   align-items: center;
   justify-content: center;

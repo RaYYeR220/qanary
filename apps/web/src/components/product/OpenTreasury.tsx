@@ -532,8 +532,8 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
 
         <Step title="Store the key on-chain" state={stateOf(!!stored, keyDone && !!account)}>
           <p className={ui.small}>
-            The public key ({blob ? `${(blob.length / 2 - 1).toLocaleString('en-US')} bytes` : 'a few kilobytes'}) goes into
-            the key store once, as contract code; the account keeps a 20-byte pointer to it. Your wallet pays.
+            The key ({blob ? `${(blob.length / 2 - 1).toLocaleString('en-US')} bytes with its scheme byte` : 'a few kilobytes'})
+            goes into the key store once, as contract code; the account keeps a 20-byte pointer to it. Your wallet pays.
           </p>
           {stored ? (
             <Mark state="ok">Stored</Mark>
