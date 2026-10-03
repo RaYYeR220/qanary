@@ -94,6 +94,15 @@
   .secondary {
     display: none;
   }
+
+  /* on a compact plate the corner lettering would touch the bill: set it as a
+     line in the plate's lower margin instead */
+  .state {
+    position: static;
+    display: block;
+    padding: 0.2rem 0.6rem 0.35rem;
+    text-align: right;
+  }
 }
 
 @media (min-width: 40em) {
