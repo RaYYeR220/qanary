@@ -104,7 +104,13 @@ export function describeError(name: string, args: readonly unknown[] = [], symbo
       return say('Nothing to store: the key is empty.');
     case 'FailedOp':
     case 'FailedOpWithRevert':
-      return say(`EntryPoint refused the operation: ${String(args[1])}.`);
+      return say(
+        String(args[1]).startsWith('AA24')
+          ? 'EntryPoint refused the operation: the post-quantum signature did not verify (AA24).'
+          : `EntryPoint refused the operation: ${String(args[1])}.`,
+      );
+    case 'LadderUnavailable':
+      return say('No ladder verifier runs on this network, so ladder claims fail closed; secp256k1 and P-256 claims still work.');
     default:
       return say(`The call reverted with ${name}.`);
   }
@@ -151,4 +157,16 @@ export function explainRevertData(data: Hex, symbol?: string): Explained | undef
     if (data.startsWith('0x08c379a0')) return { name: 'Error', message: 'The call reverted with a message.', refusal: false };
     return undefined;
   }
+}
+
+/**
+ * Explains an error recorded as text, e.g. `CapExceeded(0x0000…, 2000000000000001, 1000000000000000)`
+ * or `FailedOp(0, AA24 signature error)`: the form the end-to-end run writes next to a refused
+ * transaction. Integers become bigints so amounts format like decoded ones.
+ */
+export function explainRecordedError(text: string, symbol?: string): Explained {
+  const m = /^(\w+)\((.*)\)$/.exec(text.trim());
+  if (!m) return { name: 'Error', message: text, refusal: false };
+  const args = m[2] ? m[2].split(/,\s*/).map((a) => (/^\d+$/.test(a) ? BigInt(a) : a)) : [];
+  return describeError(m[1]!, args, symbol);
 }

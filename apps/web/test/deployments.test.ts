@@ -42,7 +42,10 @@ describe('deployment records', () => {
 
   it('reads *Tx fields of e2e sections written by a script', () => {
     const r = parseRecord(ape, { ...base, e2e: { pqUserOpTx: tx(6), sdk: { hotTransferTx: tx(7), kernelAccount: addr(8), ranAt: 'x' } } });
-    expect(r.e2e.map((t) => t.label)).toEqual(['pq user op', 'hot transfer']);
+    expect(r.e2e.map((t) => t.label)).toEqual([
+      'Treasury deployed by its first post-quantum operation',
+      'Hot-key transfer inside the cap',
+    ]);
   });
 
   it('takes only *Tx fields of e2e as transactions', () => {
@@ -77,6 +80,40 @@ describe('deployment records', () => {
     const ape = records.find((r) => r.network.key === 'apechain')!;
     expect(ape.present).toBe(true);
     expect(Object.keys(ape.stylus).sort()).toEqual(['falcon512Verifier', 'ladderVerifier', 'mldsa44Verifier', 'mldsa65Verifier']);
+  });
+
+  it('pairs each refused run transaction with its recorded error, and lists the run accounts', () => {
+    const r = parseRecord(ape, {
+      ...base,
+      e2e: {
+        sdk: {
+          kernelAccount: addr(9),
+          falconKernelAccount: addr(10),
+          hotTransferTx: tx(1),
+          hotOverCapError: 'CapExceeded(0x0000000000000000000000000000000000000000, 2, 1)',
+          hotOverCapRevertTx: tx(2),
+          postTripError: 'ClassicalFamilyBroken(0)',
+          postTripHotRevertTx: tx(3),
+          pqUserOpHash: tx(4),
+        },
+      },
+    });
+    const by = Object.fromEntries(r.e2e.map((t) => [t.hash, t]));
+    expect(by[tx(1)]!.error).toBeUndefined();
+    expect(by[tx(2)]!.error).toContain('CapExceeded');
+    expect(by[tx(3)]!.error).toBe('ClassicalFamilyBroken(0)');
+    // a user-operation hash is not a transaction
+    expect(by[tx(4)]).toBeUndefined();
+    expect(r.heroes!.map((h) => h.address)).toEqual([addr(9), addr(10)]);
+    expect(r.run!.pqUserOpHash).toBe(tx(4));
+  });
+
+  it('reads the live run on both networks', () => {
+    for (const r of readDeployments().filter((x) => x.network.key !== 'apechain-curtis')) {
+      expect(r.heroes!.length).toBeGreaterThan(0);
+      expect(r.e2e.some((t) => t.error?.startsWith('ClassicalFamilyBroken'))).toBe(true);
+      expect(r.evm.map((c) => c.key)).toContain('hotTierExecutor');
+    }
   });
 
   it('shortens hex for display', () => {

@@ -1,7 +1,7 @@
 import { encodeErrorResult, parseAbi, zeroAddress, type Hex } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { bucketView, effectiveCap, formatDuration } from '@/lib/bucket';
-import { ERRORS_ABI, explainRevertData } from '@/lib/errors';
+import { ERRORS_ABI, explainRecordedError, explainRevertData } from '@/lib/errors';
 
 const enc = (errorName: string, args: readonly unknown[]): Hex =>
   encodeErrorResult({ abi: ERRORS_ABI, errorName, args } as Parameters<typeof encodeErrorResult>[0]);
@@ -41,6 +41,18 @@ describe('error decoding', () => {
     const other = encodeErrorResult({ abi: parseAbi(['error Nope(uint256)']), errorName: 'Nope', args: [1n] });
     expect(explainRevertData(other)).toBeUndefined();
     expect(explainRevertData('0x')).toBeUndefined();
+  });
+});
+
+describe('errors recorded by the live run', () => {
+  it('explains the recorded refusals', () => {
+    const cap = explainRecordedError('CapExceeded(0x0000000000000000000000000000000000000000, 2000000000000001, 1000000000000000)', 'APE');
+    expect(cap).toMatchObject({ name: 'CapExceeded', refusal: true });
+    expect(cap.message).toContain('0.002000000000000001 APE');
+    expect(cap.message).toContain('0.001 APE');
+    expect(explainRecordedError('ClassicalFamilyBroken(0)')).toMatchObject({ name: 'ClassicalFamilyBroken', refusal: true });
+    expect(explainRecordedError('FailedOp(0, AA24 signature error)').message).toContain('did not verify');
+    expect(explainRecordedError('LadderUnavailable()').name).toBe('LadderUnavailable');
   });
 });
 

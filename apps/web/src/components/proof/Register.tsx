@@ -7,6 +7,7 @@ import {
   type NetworkRecord,
   type StylusKey,
 } from '@/lib/deployments';
+import { explainRecordedError } from '@/lib/errors';
 import styles from './Register.module.css';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -129,18 +130,28 @@ export function Register({ records }: { records: NetworkRecord[] }) {
       </table>
 
       <div className={styles.e2e}>
-        <h3 className={styles.txHead}>End-to-end transactions</h3>
+        <h3 className={styles.txHead}>The live run, transaction by transaction</h3>
         {e2e.length ? (
           <ul className={styles.txList}>
-            {e2e.map((t) => (
-              <li key={t.net + t.hash}>
-                <span className={styles.txLabel}>{t.label}</span>
-                <span className={styles.txNet}>{t.net}</span>
-                <a href={t.href} className={styles.addr} target="_blank" rel="noreferrer">
-                  {shortHex(t.hash)}
-                </a>
-              </li>
-            ))}
+            {e2e.map((t) => {
+              const refused = t.error ? explainRecordedError(t.error) : null;
+              return (
+                <li key={t.net + t.hash} data-refused={refused ? 'true' : undefined}>
+                  <span className={styles.txLabel}>
+                    {t.label}
+                    {refused && (
+                      <span className={styles.refused}>
+                        Refused, as intended: {refused.message} <span className={styles.errName}>{refused.name}</span>
+                      </span>
+                    )}
+                  </span>
+                  <span className={styles.txNet}>{t.net}</span>
+                  <a href={t.href} className={styles.addr} target="_blank" rel="noreferrer">
+                    {shortHex(t.hash)}
+                  </a>
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <p className={styles.empty}>

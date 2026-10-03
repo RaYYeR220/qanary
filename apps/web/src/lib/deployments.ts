@@ -64,6 +64,15 @@ export interface Tx {
   label: string;
   hash: Hex;
   href: string;
+  /** For a transaction recorded as an intended refusal: the error it reverted with, as recorded. */
+  error?: string;
+}
+
+/** An account the live run left on-chain, with how it signs. */
+export interface Hero {
+  label: string;
+  address: Hex;
+  key: string;
 }
 
 export interface Contract {
@@ -90,6 +99,9 @@ export interface NetworkRecord {
   fallbackVerifier?: Hex;
   /** The validated record, as read; handed to the SDK's `parseDeployment` in the browser. */
   json?: Record<string, unknown>;
+  heroes?: Hero[];
+  /** Fixed points of the live run a page can replay. */
+  run?: { rootKeyPointer?: Hex; pqUserOpHash?: Hex; pqUserOpTx?: Hex; drillRegistry?: Hex; hotKey?: Hex };
 }
 
 export class DeploymentError extends Error {
@@ -105,7 +117,32 @@ const ZERO = /^0x0{40}$/i;
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-const TX_LABELS: Record<string, string> = { deployTx: 'deployment', activationTx: 'activation' };
+const TX_LABELS: Record<string, string> = {
+  deployTx: 'deployment',
+  activationTx: 'activation',
+  // the live end-to-end run (`e2e.sdk`)
+  storeKeyTx: 'Root key stored in the key store',
+  prepareKeyTx: 'Root key prepared for the Solidity verifier',
+  fundAccountTx: 'Treasury funded for its first operation',
+  pqUserOpTx: 'Treasury deployed by its first post-quantum operation',
+  pqTransferTx: 'Transfer signed with the post-quantum key',
+  installHotTierTx: 'Hot tier installed',
+  hotTransferTx: 'Hot-key transfer inside the cap',
+  hotOverCapRevertTx: 'Hot-key transfer over the cap',
+  tamperedSigRevertTx: 'Operation with a tampered signature',
+  drillRegistryTx: 'Drill registry created',
+  repointHotTierTx: 'Hot tier pointed at the drill registry',
+  ladderL1ClaimTx: 'Drill: ladder rung L1 claimed',
+  ladderL1RevertTx: 'Drill: ladder claim where no ladder verifier runs',
+  drillClaimTx: 'Drill: secp256k1 claimed',
+  postTripHotRevertTx: 'Hot-key transfer after the trip',
+  mnemonicStoreKeyTx: 'Recovery-phrase key stored',
+  mnemonicFundTx: 'Recovery-phrase treasury funded',
+  mnemonicUserOpTx: 'Recovery-phrase treasury deployed',
+  falconStoreKeyTx: 'Falcon-512 key stored',
+  falconFundTx: 'Falcon-512 treasury funded',
+  falconUserOpTx: 'Falcon-512 treasury deployed',
+};
 function txLabel(key: string): string {
   if (TX_LABELS[key]) return TX_LABELS[key];
   const words = key.replace(/Tx$/, '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
@@ -128,12 +165,22 @@ export function parseRecord(network: Network, json: unknown, file = `${network.k
     return v as Hex;
   };
   // only fields named *Tx are transactions
+  // a `<name>RevertTx` pairs with the `<prefix>Error` recorded beside it
+  const errorFor = (o: Record<string, unknown>, key: string): string | undefined => {
+    if (!key.endsWith('RevertTx')) return undefined;
+    const stem = key.slice(0, -'RevertTx'.length);
+    const exact = o[`${stem}Error`];
+    if (typeof exact === 'string') return exact;
+    const near = Object.entries(o).find(([k, v]) => k.endsWith('Error') && typeof v === 'string' && stem.startsWith(k.slice(0, -'Error'.length)));
+    return near ? (near[1] as string) : 'reverted';
+  };
   const txs = (o: Record<string, unknown>, at: string): Tx[] =>
     Object.entries(o)
       .filter(([k]) => k.endsWith('Tx'))
       .map(([k, v]) => {
         if (typeof v !== 'string' || !HASH.test(v)) fail(`${at}.${k} is not a transaction hash`);
-        return { label: txLabel(k), hash: v as Hex, href: `${network.explorer}/tx/${v}` };
+        const error = errorFor(o, k);
+        return { label: txLabel(k), hash: v as Hex, href: `${network.explorer}/tx/${v}`, ...(error ? { error } : {}) };
       });
   const num = (v: unknown, at: string): number | undefined => {
     if (v === undefined) return undefined;
@@ -193,10 +240,46 @@ export function parseRecord(network: Network, json: unknown, file = `${network.k
     fallbackVerifier = address(isObject(v) ? v.address : v, `${section}.${key}`);
     break;
   }
-  return { network, present: true, stylus, evm, e2e, ...(fallbackVerifier ? { fallbackVerifier } : {}), json: doc };
+  // the treasuries the live run opened, and what a page needs to replay its checks
+  const heroes: Hero[] = [];
+  let run: NetworkRecord['run'];
+  const sdk = isObject(doc.e2e) && isObject((doc.e2e as Record<string, unknown>).sdk) ? ((doc.e2e as Record<string, unknown>).sdk as Record<string, unknown>) : null;
+  if (sdk) {
+    const opt = (k: string) => (sdk[k] === undefined ? undefined : address(sdk[k], `e2e.sdk.${k}`));
+    const hash = (k: string) => {
+      const v = sdk[k];
+      if (v === undefined) return undefined;
+      if (typeof v !== 'string' || !HASH.test(v)) fail(`e2e.sdk.${k} is not a 32-byte hash`);
+      return v as Hex;
+    };
+    const kms = opt('kernelAccount');
+    if (kms) heroes.push({ label: 'Treasury with an AWS KMS root key', address: kms, key: 'ML-DSA-44 in an AWS KMS HSM' });
+    const mn = opt('mnemonicKernelAccount');
+    if (mn) heroes.push({ label: 'Treasury from a recovery phrase', address: mn, key: 'ML-DSA-44 from a recovery phrase' });
+    const fa = opt('falconKernelAccount');
+    if (fa) heroes.push({ label: 'Falcon-512 treasury', address: fa, key: 'Falcon-512 from a recovery phrase' });
+    run = {
+      ...(opt('rootKeyPointer') ? { rootKeyPointer: opt('rootKeyPointer')! } : {}),
+      ...(hash('pqUserOpHash') ? { pqUserOpHash: hash('pqUserOpHash')! } : {}),
+      ...(hash('pqUserOpTx') ? { pqUserOpTx: hash('pqUserOpTx')! } : {}),
+      ...(opt('drillRegistry') ? { drillRegistry: opt('drillRegistry')! } : {}),
+      ...(opt('hotKey') ? { hotKey: opt('hotKey')! } : {}),
+    };
+  }
+  return {
+    network,
+    present: true,
+    stylus,
+    evm,
+    e2e,
+    heroes,
+    ...(run ? { run } : {}),
+    ...(fallbackVerifier ? { fallbackVerifier } : {}),
+    json: doc,
+  };
 }
 
-export const emptyRecord = (network: Network): NetworkRecord => ({ network, present: false, stylus: {}, evm: [], e2e: [] });
+export const emptyRecord = (network: Network): NetworkRecord => ({ network, present: false, stylus: {}, evm: [], e2e: [], heroes: [] });
 
 function repoRoot(): string {
   let dir = process.cwd();
@@ -236,6 +319,11 @@ export interface ProductNetwork {
   /** Validated deployment record, or null while nothing is deployed there. */
   json: Record<string, unknown> | null;
   fallbackVerifier: Hex | null;
+  heroes: Hero[];
+  run: NonNullable<NetworkRecord['run']> | null;
+  /** Transaction that deployed the account modules: logs start no earlier than its block. */
+  modulesTx: Hex | null;
+  e2e: Tx[];
 }
 
 const RPC: Record<NetworkKey, { rpc: string; nativeSymbol: string }> = {
@@ -266,5 +354,9 @@ export function productNetworks(records: NetworkRecord[] = readDeployments()): P
     stylus: r.network.stylus,
     json: normalise(r.json),
     fallbackVerifier: r.fallbackVerifier ?? null,
+    heroes: r.heroes ?? [],
+    run: r.run ?? null,
+    modulesTx: r.evm.find((c) => c.key === 'keyStore')?.txs.find((t) => t.label === 'deployment')?.hash ?? null,
+    e2e: r.e2e,
   }));
 }
