@@ -47,7 +47,8 @@ full Qanary stack runs there.
 
 On Arbitrum One, accounts use the Solidity ML-DSA-44 verifier as their ERC-7913 backend instead. When Stylus
 activations return, deploy the Stylus verifiers there with the same script and switch each account over with
-`QuantumValidator.rotateKey(verifier, keyPtr)`; the KeyStore pointer stays the same.
+`QuantumValidator.rotateKey(verifier, keyPtr, proof)`, where `proof` is the key's signature over
+`rotationDigest(account, verifier, keyPtr)`; the KeyStore pointer stays the same.
 
 ### Prerequisites
 
@@ -182,3 +183,193 @@ Deployment (101.68 gwei, recorded in `deployments/apechain.json`):
 - **Caching.** ApeChain and Curtis have no Stylus CacheManager, so the programs run uncached and every call
   pays the program's initialization cost (`ArbWasm.programInitGas`, about 20.5k gas for ML-DSA-44 versus
   about 3k when cached). Where a CacheManager exists the script places a zero bid automatically.
+
+## Solidity modules
+
+`contracts/evm/script/Deploy.s.sol` deploys the account modules on one network and records them under
+`evm` in `deployments/<network>.json`:
+
+| Contract | Role |
+|---|---|
+| `KeyStore` | Content-addressed store for post-quantum public keys |
+| `QuantumValidator` | ERC-7579 validator: a post-quantum key is the account's root |
+| `HotTierExecutor` | Capped classical hot key, scaled down by the quantum canary |
+| `PQSafeOwnerFactory` | Post-quantum Safe owners |
+| `QanaryAccountFactory` | OpenZeppelin ERC-4337 accounts with ERC-7913 post-quantum signers |
+| `QuantumCanaryRegistry` | The live tripwire over the nothing-up-my-sleeve keys |
+| `DrillRegistryFactory` | Drill registries over the published drill keys, for rehearsals |
+
+The script reads the Stylus programs from the same file. Where a network has no Stylus ML-DSA-44 program
+it deploys the Solidity verifier stack instead (`contracts/evm/src/fallback/README.md`): the
+Keccak-f[1600] helper, the vendored core, the expanded-key store and the ERC-7913 adapter, recorded as
+`mldsa44SolidityVerifier`. Where it has no Stylus ladder program it deploys `LadderUnavailableVerifier`,
+so ladder claims (L1–L3) fail closed while K1 and R1 claims still trip the registry. The bounty token is
+USDG on Arbitrum One and none (native bounties only) on ApeChain, where USDG does not exist.
+
+### Where they are deployed
+
+The deployer used the same nonce for each shared contract on both chains, so they have the same address:
+
+| Contract | Address on ApeChain and Arbitrum One |
+|---|---|
+| KeyStore | `0x12cF4EE4073d5F3E5DE8bFE6e34522cEb46854f6` |
+| QuantumValidator | `0x0057Fcac28c7094910D563Ad31E437d78a92036a` |
+| HotTierExecutor | `0xE5A6EFCEAcdBFe96593f01F7770C1163B0C631f3` |
+| PQSafeOwnerFactory | `0x4Ce066c253d38bFF3012607B0D3B1B4b8E29ABA3` |
+| QanaryAccountFactory | `0xdbEEAA8CC79A925b42A5F42f3F1bA81afC132609` |
+| QuantumCanaryRegistry | `0x4848512a663F59fA23708C1Fa2f1cEA21B888A95` (ladder: the Stylus program on ApeChain, `LadderUnavailableVerifier` on Arbitrum One) |
+| DrillRegistryFactory | `0xA523899D17954a5BeE0Ee102124C458942878032` |
+
+Arbitrum One only:
+
+| Contract | Address |
+|---|---|
+| ML-DSA-44 verifier (Solidity adapter) | `0xc9C7B3B71f4A3451adeb29604bd8eA789F3F2EfE` |
+| ML-DSA-44 core (vendored) | `0xf2d5c07ae3817B8bbDf57970369a6604377e588E` |
+| Expanded-key store | `0x49fdfaCaf748cbe2F9adb4cAeE50F87582CEf8f5` |
+| Keccak-f[1600] helper | `0x68b5C1b28707AC3201880d59f27cFc6583D4FF8D` |
+| `LadderUnavailableVerifier` | `0xBf33F4FE6D73fEcDE03E388f4FE985fe1d88b9D6` |
+
+Deployment transactions and gas are in the JSON files and in [PROOF.md](../PROOF.md).
+
+### Deploying the modules
+
+```bash
+cd contracts/evm
+export DEPLOYER_PRIVATE_KEY=0x…
+
+# Simulate against the live chain: prints addresses and gas, sends and writes nothing
+forge script script/Deploy.s.sol --rpc-url https://rpc.apechain.com/http
+
+# Deploy, one transaction at a time
+forge script script/Deploy.s.sol --rpc-url https://rpc.apechain.com/http --broadcast --slow
+
+# Add each contract's deployment transaction, gas and cost from the broadcast receipts
+cd ../../packages/sdk && npx tsx scripts/record-deploy.ts --network apechain
+```
+
+Arbitrum One works the same way with `--rpc-url https://arb1.arbitrum.io/rpc` and `--network arbitrum-one`.
+
+- **Idempotent.** A contract already recorded under `evm` that has code on-chain is reused. After a
+  partial failure, run the script again and it deploys only what is missing.
+- **Same addresses on every chain.** Contract addresses follow the deployer's nonce. To match another
+  chain, first bring the nonce to the same value with empty self-transfers (`cast send <deployer> --value 0`,
+  repeated). The script can do this itself with `ALIGN_NONCE=<n>`, but Forge then asks to confirm
+  transactions to an address without code, which needs a terminal; `cast` does not. The Arbitrum One
+  alignment transactions are listed under `nonceAlignment` in its JSON file.
+- **Stylus programs in simulations.** Forge cannot execute Stylus programs, so the script checks the
+  Solidity verifier's `schemes()` locally and leaves the Stylus programs to `QuantumValidator`, which
+  checks `schemes()` on-chain whenever an account installs it.
+- **Gas on Arbitrum chains.** Forge estimates every transaction through the RPC, so the parent-chain data
+  fee is included. Its "Estimated amount required" assumes twice the base fee on every transaction; the
+  actual cost is about half of it.
+
+### Verifying the modules
+
+The Solidity contracts are verified on [Sourcify](https://sourcify.dev), which needs no API key:
+
+```bash
+cd contracts/evm
+forge verify-contract --verifier sourcify --chain 33139 \
+  0x12cF4EE4073d5F3E5DE8bFE6e34522cEb46854f6 src/KeyStore.sol:KeyStore --watch
+```
+
+Constructor arguments go in `--constructor-args $(cast abi-encode …)`: the registry takes
+`(ladder, bountyToken, CanaryTargets.nums(), false)`, the drill factory `(ladder, bountyToken)`, the core
+and the expanded-key store `(helper)`, the adapter `(core, store)`. The Keccak-f[1600] helper is raw
+runtime with no Solidity source. Check it by code hash instead: `cast codehash
+0x68b5C1b28707AC3201880d59f27cFc6583D4FF8D -r https://arb1.arbitrum.io/rpc` must print
+`0x4afb4435879cdf8e50474c7aab2bc3a679caed432550ad6dba64f509309a817b`, the hash the core and the store
+check in their constructors.
+
+### Cost of the modules
+
+| Contract | Gas on ApeChain | Gas on Arbitrum One |
+|---|---:|---:|
+| KeyStore | 452,984 | 453,804 |
+| QuantumValidator | 2,430,228 | 2,434,735 |
+| HotTierExecutor | 4,946,452 | 4,954,756 |
+| PQSafeOwnerFactory | 1,248,718 | 1,250,913 |
+| QanaryAccountFactory (with both implementations) | 5,734,781 | 5,743,154 |
+| QuantumCanaryRegistry | 2,120,751 | 2,125,134 |
+| DrillRegistryFactory | 2,630,247 | 2,635,092 |
+| LadderUnavailableVerifier | — | 108,987 |
+| Keccak-f[1600] helper | — | 4,719,182 |
+| ML-DSA-44 core | — | 5,209,232 |
+| Expanded-key store | — | 1,122,350 |
+| ML-DSA-44 adapter | — | 840,339 |
+| **Total** | **19,564,161 gas, 1.989 APE** | **31,597,678 gas, 0.000633 ETH** |
+
+## End-to-end run
+
+`packages/sdk/scripts/e2e.ts` runs a treasury account through its whole life on a live network. Every
+user operation is self-bundled: the deployer sends `EntryPoint.handleOps` itself, which works on chains
+without a public ERC-4337 bundler (ApeChain) and lets the refusals land on-chain as failed transactions.
+
+```bash
+cd packages/sdk
+export DEPLOYER_PRIVATE_KEY=0x…
+# AWS KMS root key (ML_DSA_44, SIGN_VERIFY); credentials come from the usual AWS provider chain
+export QANARY_KMS_KEY_ID=… AWS_REGION=us-east-1 AWS_PROFILE=…
+# where the run keeps the mnemonic and the hot key it creates (never printed)
+export QANARY_SECRETS_DIR=/path/outside/the/repo
+
+npx tsx scripts/e2e.ts --network apechain --root kms --extras mnemonic,falcon --max-spend 2.5
+npx tsx scripts/e2e.ts --network arbitrum-one --root kms --max-spend 0.00105
+```
+
+The treasury account has the AWS KMS ML-DSA-44 key as its root:
+
+1. The root key goes into the KeyStore. On the Solidity verifier, `prepareKey` expands it on-chain, once
+   per key.
+2. A Kernel v3.3 account with the QuantumValidator as root is deployed by its first user operation, signed
+   by the KMS key.
+3. A native transfer signed by the KMS key.
+4. A root user operation installs the hot tier (one secp256k1 hot key, a native cap, ladder levels
+   100% / 50% / 25% / 0%) following the live registry.
+5. The hot key moves half the cap, which succeeds. It then tries more than the cap, and the transaction
+   fails with `CapExceeded`.
+6. A user operation whose post-quantum signature has one flipped byte: `handleOps` fails with
+   `AA24 signature error`.
+7. A drill registry from the factory. A root user operation re-points the hot tier at it.
+8. Ladder rung L1 (secp160r1) is claimed with the published drill key. On ApeChain the Stylus ladder
+   verifier accepts it and the hot tier drops to 50%. On Arbitrum One the claim fails with
+   `LadderUnavailable`.
+9. K1 is claimed with the published drill key: secp256k1 is marked broken, and the next hot transfer fails
+   with `ClassicalFamilyBroken`.
+10. ERC-1271 through Kernel: `isValidSignature` returns `0x1626ba7e` for the KMS signature and
+    `0xffffffff` for the same signature on another hash.
+
+`--extras mnemonic,falcon` adds an account with an ML-DSA-44 root derived from a BIP-39 mnemonic, as a
+browser wallet would, and one with a Falcon-512 root. Each is deployed by one signed user operation that
+also transfers.
+
+Each transaction is simulated before it is sent, and each expected failure is confirmed by simulation
+first, then sent with a fixed gas limit. The run stops before any step that would take the deployer's
+spend over `--max-spend`. Every hash goes into `deployments/<network>.json` under `e2e.sdk`. A step that
+is already recorded is skipped, so an interrupted run resumes where it stopped. Afterwards, render the
+proof pages with `pnpm proof`.
+
+### Gas of the end-to-end steps
+
+| Step | ApeChain (Stylus) | Arbitrum One (Solidity) |
+|---|---:|---:|
+| Store the root key | 345,109 | 346,234 |
+| Expand the key for the Solidity verifier (once per key) | — | 9,896,269 |
+| First user operation, deploys the account | 525,339 | 1,613,983 |
+| Native transfer signed by the root | 297,724 | 1,407,338 |
+| Root installs the hot tier | 556,307 | 1,666,414 |
+| Hot-key transfer within the cap | 111,743 | 112,002 |
+| Hot-key transfer over the cap (fails) | 101,948 | 102,251 |
+| Tampered signature (fails, AA24) | 276,508 | 1,386,274 |
+| Drill registry | 1,965,081 | 1,965,166 |
+| Root re-points the hot tier | 380,277 | 1,487,519 |
+| L1 claim | 878,308 | 29,369 (fails, no ladder) |
+| K1 claim | 43,384 | 60,851 |
+| Hot-key transfer after the trip (fails) | 46,441 | 46,910 |
+| Mnemonic ML-DSA-44 account: store key, first user operation | 345,109 + 532,209 | — |
+| Falcon-512 account: store key, first user operation | 254,934 + 429,154 | — |
+
+The account pays for its own user operations. Its first operation leaves a deposit in the EntryPoint (the
+prefund minus the cost), which later operations draw on. The deposit stays the account's and a root user
+operation can withdraw it with `EntryPoint.withdrawTo`.

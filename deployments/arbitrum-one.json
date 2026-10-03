@@ -9,31 +9,36 @@
       "address": "0x12cF4EE4073d5F3E5DE8bFE6e34522cEb46854f6",
       "deployTx": "0x1657bf58ef5b7d94216f0740ccebaf1848165ce2ab3e3e0789e19cc1bd75b2ec",
       "gasUsed": 453804,
-      "costWei": "9153227133804"
+      "costWei": "9153227133804",
+      "verified": "sourcify exact_match"
     },
     "quantumValidator": {
       "address": "0x0057Fcac28c7094910D563Ad31E437d78a92036a",
       "deployTx": "0x7cd5248e26f893620a1c3786d8dd458d9ba29825591e0d8ac4b3d61f1e8a8c2a",
       "gasUsed": 2434735,
-      "costWei": "48787222364735"
+      "costWei": "48787222364735",
+      "verified": "sourcify exact_match"
     },
     "hotTierExecutor": {
       "address": "0xE5A6EFCEAcdBFe96593f01F7770C1163B0C631f3",
       "deployTx": "0x5762ff05a3e7be175d666fce3feddfafcbde59e4fa886256facee11295c9b94e",
       "gasUsed": 4954756,
-      "costWei": "99105034466756"
+      "costWei": "99105034466756",
+      "verified": "sourcify exact_match"
     },
     "pqSafeOwnerFactory": {
       "address": "0x4Ce066c253d38bFF3012607B0D3B1B4b8E29ABA3",
       "deployTx": "0x248003b7299f22858a5567c6d4c96dcb7fea2d10a5b790a3b0aad88eb2acf5e9",
       "gasUsed": 1250913,
-      "costWei": "25045781336913"
+      "costWei": "25045781336913",
+      "verified": "sourcify exact_match"
     },
     "qanaryAccountFactory": {
       "address": "0xdbEEAA8CC79A925b42A5F42f3F1bA81afC132609",
       "deployTx": "0x853da640345e70ffbbed1a9361bcade614695357fd932812e4b2ff70fa11f398",
       "gasUsed": 5743154,
-      "costWei": "115150243443154"
+      "costWei": "115150243443154",
+      "verified": "sourcify exact_match"
     },
     "canaryRegistry": {
       "address": "0x4848512a663F59fA23708C1Fa2f1cEA21B888A95",
@@ -41,7 +46,8 @@
       "bountyToken": "0x004B506865409877C9fA29bfb1ebA929984B9bbC",
       "deployTx": "0xa06ff3f26b825011c495d1c7966de5262e796c7a84ebeb99e49863e991c6a317",
       "gasUsed": 2125134,
-      "costWei": "42557935609134"
+      "costWei": "42557935609134",
+      "verified": "sourcify exact_match"
     },
     "drillRegistryFactory": {
       "address": "0xA523899D17954a5BeE0Ee102124C458942878032",
@@ -49,37 +55,44 @@
       "bountyToken": "0x004B506865409877C9fA29bfb1ebA929984B9bbC",
       "deployTx": "0xf13fdc9f34544eaf4f9a28d23cde66bf3fa5f9774a9b8665a8db3d4fde581981",
       "gasUsed": 2635092,
-      "costWei": "52701842635092"
+      "costWei": "52701842635092",
+      "verified": "sourcify exact_match"
     },
     "ladderUnavailable": {
       "address": "0xBf33F4FE6D73fEcDE03E388f4FE985fe1d88b9D6",
       "deployTx": "0xb37e0ef2feec4e4def108acf0cd8ce80f4e0319c68a65f89d0269f6a7056aad0",
       "gasUsed": 108987,
-      "costWei": "2179740108987"
+      "costWei": "2179740108987",
+      "verified": "sourcify exact_match"
     },
     "keccakF1600Helper": {
       "address": "0x68b5C1b28707AC3201880d59f27cFc6583D4FF8D",
       "deployTx": "0x1397a42d94b7037343b6651bffb64e9e8a6d2c7de1dd13ee20a2451a868abec2",
       "gasUsed": 4719182,
-      "costWei": "94751740915182"
+      "costWei": "94751740915182",
+      "codehash": "0x4afb4435879cdf8e50474c7aab2bc3a679caed432550ad6dba64f509309a817b",
+      "verified": "raw runtime (vendor/f1600_170.hex), checked by code hash"
     },
     "mldsa44VerifierCore": {
       "address": "0xf2d5c07ae3817B8bbDf57970369a6604377e588E",
       "deployTx": "0x17118eb2a6351c0bfd960d4b7675442b2bbb5384e74f5181c3e6c7c313e395ab",
       "gasUsed": 5209232,
-      "costWei": "104455525273232"
+      "costWei": "104455525273232",
+      "verified": "sourcify exact_match"
     },
     "mldsa44ExpandedKeyStore": {
       "address": "0x49fdfaCaf748cbe2F9adb4cAeE50F87582CEf8f5",
       "deployTx": "0x671ac654e13d58762241f27eadafb38821325421de65bcc8d4b00b73b1ce4a02",
       "gasUsed": 1122350,
-      "costWei": "22469448122350"
+      "costWei": "22469448122350",
+      "verified": "sourcify exact_match"
     },
     "mldsa44SolidityVerifier": {
       "address": "0xc9C7B3B71f4A3451adeb29604bd8eA789F3F2EfE",
       "deployTx": "0xe9aedfd48a270a5b90bd12e0ec3e93ab8083c4dd46b6a2ae4d2ba4bde617cc75",
       "gasUsed": 840339,
-      "costWei": "16815184230339"
+      "costWei": "16815184230339",
+      "verified": "sourcify exact_match"
     }
   },
   "nonceAlignment": {
