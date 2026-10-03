@@ -189,7 +189,8 @@ export function VerifyPlayground({ networks }: { networks: ProductNetwork[] }) {
           </div>
           <p className={ui.small}>
             A read-only <span className={ui.italic}>eth_call</span> to each verifier: no wallet, no gas paid. The gas
-            shown is what the same call would cost as a transaction on that chain.
+            shown is the L2 gas the same call would use as a transaction on that chain (execution and calldata,
+            without the parent-chain data fee).
           </p>
           <div>
             <button type="button" className={ui.button} onClick={() => void verify()}>
@@ -265,6 +266,8 @@ function KmsReplay({ networks }: { networks: ProductNetwork[] }) {
   const ape = networks.find((n) => n.key === 'apechain');
   const [tampered, setTampered] = useState(false);
   const [checks, setChecks] = useState<Replay>({});
+  // whether the signature last sent to the verifiers was the tampered one
+  const [sentTampered, setSentTampered] = useState(false);
   const [sig, setSig] = useState<Hex | null>(null);
   const [error, setError] = useState<Explained | null>(null);
   const run = arb?.run;
@@ -287,6 +290,7 @@ function KmsReplay({ networks }: { networks: ProductNetwork[] }) {
         setSig(signature);
       }
       const used = tampered ? tamper(signature) : signature;
+      setSentTampered(tampered);
       const next: Replay = Object.fromEntries(columns.map((n) => [n.key, { state: 'running' } as Check]));
       setChecks({ ...next });
       await Promise.all(
@@ -312,8 +316,10 @@ function KmsReplay({ networks }: { networks: ProductNetwork[] }) {
     }
   };
 
-  const apeGas = checks.apechain?.state === 'done' ? checks.apechain.gas : null;
-  const arbGas = checks['arbitrum-one']?.state === 'done' ? checks['arbitrum-one'].gas : null;
+  // the comparison is about one valid signature checked twice; a refused run has nothing to compare
+  const valid = (c: Check | undefined) => (c?.state === 'done' && c.valid ? c.gas : null);
+  const apeGas = sentTampered ? null : valid(checks.apechain);
+  const arbGas = sentTampered ? null : valid(checks['arbitrum-one']);
 
   return (
     <section className={ui.panel} aria-labelledby="kms-h">
@@ -382,7 +388,7 @@ function KmsReplay({ networks }: { networks: ProductNetwork[] }) {
                 ) : (
                   <div className={ui.stamp}>
                     <span className={ui.stampWord}>Refused</span>
-                    <span>The tampered signature does not verify.</span>
+                    <span>{sentTampered ? 'The tampered signature does not verify.' : 'The signature does not verify.'}</span>
                     <span className={ui.stampName}>{gas(c.gas)}</span>
                   </div>
                 ))}
