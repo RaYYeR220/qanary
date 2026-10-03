@@ -13,6 +13,7 @@ import {
   parseCap,
   prefundFor,
   prepareKeyRequest,
+  rootKeyMatches,
   storeKeyRequest,
 } from '@/lib/treasury';
 
@@ -177,5 +178,28 @@ describe('the address of a new treasury', () => {
     const client = node(() => zeroAddress);
     await expect(newTreasuryAccount(client, { signer, deployment: d, registry: d.canaryRegistry! })).rejects.toThrow(/zero address/);
     expect(() => fundRequest(zeroAddress, 100n, 0n)).toThrow(/not known/);
+  });
+});
+
+describe('the key-ownership check before a cold send', () => {
+  const d = parseDeployment(33139, {
+    network: 'apechain',
+    chainId: 33139,
+    stylus: { mldsa44Verifier: '0x00000000000000000000000000000000000000d4', falcon512Verifier: '0x00000000000000000000000000000000000000d5' },
+    evm: { keyStore: KEY_STORE, quantumValidator: '0x00000000000000000000000000000000000000e5' },
+  });
+  const pointer = predictKeyPointer(KEY_STORE, blob);
+
+  it('accepts the key the validator holds, on its scheme\'s verifier', () => {
+    expect(rootKeyMatches({ verifier: d.verifiers.mldsa44!, keyPtr: pointer }, d, signer)).toBe(true);
+  });
+
+  it('refuses another key, another scheme or another verifier', () => {
+    const other = pqSignerFromSeed('mldsa44', new Uint8Array(32).fill(8));
+    expect(rootKeyMatches({ verifier: d.verifiers.mldsa44!, keyPtr: pointer }, d, other)).toBe(false);
+    const falcon = pqSignerFromSeed('falcon512', new Uint8Array(32).fill(7));
+    expect(rootKeyMatches({ verifier: d.verifiers.mldsa44!, keyPtr: pointer }, d, falcon)).toBe(false);
+    expect(rootKeyMatches({ verifier: d.verifiers.falcon512!, keyPtr: pointer }, d, signer)).toBe(false);
+    expect(rootKeyMatches({ verifier: zeroAddress, keyPtr: zeroAddress }, d, signer)).toBe(false);
   });
 });

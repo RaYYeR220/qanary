@@ -9,6 +9,7 @@ import { bucketView, formatDuration } from '@/lib/bucket';
 import { deploymentOf, explorerTx, publicClientFor, type ProductNetwork } from '@/lib/chain';
 import { explainError, explainRecordedError, type Explained } from '@/lib/errors';
 import { amount, gas } from '@/lib/format';
+import { rootKeyMatches } from '@/lib/treasury';
 import {
   canary,
   createQanaryAccount,
@@ -21,7 +22,7 @@ import {
   userOperationOutcome,
   type Scheme,
 } from '@/lib/sdk';
-import { loadTreasuries, loadVault, openPhrase, type TreasuryRecord } from '@/lib/vault';
+import { loadTreasuries, loadVault, openPhrase, type TreasuryRecord, type VaultRecord } from '@/lib/vault';
 import { BucketGauge } from './BucketGauge';
 import { Hex, Mark, Outcome, WalletBar } from './kit';
 import { LadderReadout } from './LadderReadout';
@@ -50,7 +51,7 @@ async function readRegistry(client: PublicClient, registry: Address) {
     Promise.all(([0, 1, 2, 3, 4] as const).map((t) => c.claimed(t))),
     c.familyBroken(0),
     c.familyBroken(1),
-    c.isDrill().catch(() => false),
+    c.isDrill().catch(() => null),
   ]);
   return { address: registry, level, claimed, families: [k1, r1] as [boolean, boolean], drill };
 }
@@ -65,19 +66,25 @@ async function readTreasury(n: ProductNetwork, account: Address) {
     : null;
   const hot = d.hotTierExecutor && deployed ? await hotTier(client, d.hotTierExecutor).status(account).catch(() => null) : null;
   let caps: Record<string, bigint> = {};
-  // the registry the hot tier follows: the latest Configured event says, the canonical one otherwise
-  let followed: Address | undefined = d.canaryRegistry;
-  if (d.hotTierExecutor && hot?.configured) {
+  // Which registry the threat panel reads. With a hot tier, the one it follows: the executor has no
+  // getter for it, so the latest Configured event says. If the logs cannot be read, the panel says
+  // so instead of showing another registry. Without a hot tier, the network's live registry.
+  const hasHot = !!(d.hotTierExecutor && hot?.configured);
+  let followed: Address | undefined = hasHot ? undefined : d.canaryRegistry;
+  let followUnknown = false;
+  if (hasHot) {
     const [capLogs, configLogs] = await Promise.all([
-      client.getContractEvents({ address: d.hotTierExecutor, abi: hotTierExecutorAbi, eventName: 'CapSet', args: { account }, fromBlock: from }).catch(() => []),
-      client.getContractEvents({ address: d.hotTierExecutor, abi: hotTierExecutorAbi, eventName: 'Configured', args: { account }, fromBlock: from }).catch(() => []),
+      client.getContractEvents({ address: d.hotTierExecutor!, abi: hotTierExecutorAbi, eventName: 'CapSet', args: { account }, fromBlock: from }).catch(() => null),
+      client.getContractEvents({ address: d.hotTierExecutor!, abi: hotTierExecutorAbi, eventName: 'Configured', args: { account }, fromBlock: from }).catch(() => null),
     ]);
-    caps = Object.fromEntries(capLogs.map((l) => [String(l.args.asset).toLowerCase(), l.args.cap as bigint]));
-    const last = configLogs[configLogs.length - 1];
+    if (capLogs) caps = Object.fromEntries(capLogs.map((l) => [String(l.args.asset).toLowerCase(), l.args.cap as bigint]));
+    const last = configLogs?.[configLogs.length - 1];
     if (last?.args.registry) followed = last.args.registry as Address;
+    else followUnknown = true;
   }
   const registry = followed ? await readRegistry(client, followed).catch(() => null) : null;
-  return { deployed, balance, root, hot, caps, registry };
+  const registryFailed = !!followed && !registry;
+  return { deployed, balance, root, hot, caps, registry, hasHot, followUnknown, registryFailed };
 }
 
 async function readOps(client: PublicClient, n: ProductNetwork, account: Address): Promise<{ ops: Op[]; partial: boolean }> {
@@ -124,8 +131,8 @@ export function Dashboard({ network, account }: { network: ProductNetwork; accou
 
   const t = q.data;
   const hero = network.heroes.find((h) => h.address.toLowerCase() === account.toLowerCase());
-  // the run's steps belong to the treasury it opened first (the KMS-rooted one)
-  const run = hero && network.heroes[0]?.address.toLowerCase() === account.toLowerCase() ? network.e2e : [];
+  // the run's steps for this treasury only
+  const run = hero?.steps ?? [];
   const missing = [!d.quantumValidator && 'quantum validator', !d.hotTierExecutor && 'hot-tier executor', !d.canaryRegistry && 'tripwire registry'].filter(Boolean) as string[];
 
   return (
@@ -238,10 +245,28 @@ export function Dashboard({ network, account }: { network: ProductNetwork; accou
         </h2>
         {!d.canaryRegistry ? (
           <Mark state="deploying">The tripwire registry is deploying on {network.name}</Mark>
+        ) : t && (t.followUnknown || t.registryFailed) ? (
+          <div className={ui.row}>
+            <Mark state="refused">
+              {t.followUnknown
+                ? 'Unavailable: the logs that say which registry this hot tier follows could not be read.'
+                : 'Unavailable: the registry could not be read.'}
+            </Mark>
+            <button type="button" className={ui.quiet} onClick={() => void q.refetch()} disabled={q.isFetching}>
+              {q.isFetching ? 'Reading…' : 'Try again'}
+            </button>
+          </div>
         ) : t?.registry ? (
           <>
             <p className={ui.small}>
-              {t.registry.drill ? 'The hot tier follows a drill registry' : 'The hot tier follows the live registry'}:{' '}
+              {!t.hasHot
+                ? 'This account has no hot tier. The network’s live registry reads'
+                : t.registry.drill === true
+                  ? 'The hot tier follows a drill registry'
+                  : t.registry.address.toLowerCase() === d.canaryRegistry.toLowerCase()
+                    ? 'The hot tier follows the live registry'
+                    : 'The hot tier follows the registry'}
+              :{' '}
               <Hex value={t.registry.address} network={network} />
             </p>
             <LadderReadout claimed={t.registry.claimed} label={`Ladder level ${t.registry.level} of 3`} />
@@ -396,7 +421,9 @@ function ColdSend({ network, account, deployed, defaultScheme }: { network: Prod
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Explained | null>(null);
   const [done, setDone] = useState<{ hash: Hash; ok: boolean } | null>(null);
-  const vault = typeof window === 'undefined' ? null : loadVault();
+  // read after hydration: the server has no saved copy to render
+  const [vault, setVault] = useState<VaultRecord | null>(null);
+  useEffect(() => setVault(loadVault()), []);
   const ready = conn.status === 'connected' && conn.chainId === network.chainId && !!wallet.data;
 
   const send = async (to: Address, value: bigint) => {
@@ -408,6 +435,14 @@ function ColdSend({ network, account, deployed, defaultScheme }: { network: Prod
       if (!words) throw new Error('Enter the recovery phrase, or unlock the copy saved in this browser.');
       const s = vault && !phrase.trim() ? (vault.scheme as Scheme) : scheme;
       const signer = pqSignerFromMnemonic(s, words);
+      // the account's root key, as the validator holds it, must be this key on this verifier
+      const config = await publicClientFor(network).readContract({
+        address: d.quantumValidator!,
+        abi: quantumValidatorAbi,
+        functionName: 'configOf',
+        args: [account],
+      });
+      if (!rootKeyMatches(config, d, signer)) throw new Error('That key does not control this account.');
       const acct = await createQanaryAccount(publicClientFor(network), {
         signer,
         registry: d.canaryRegistry ?? zeroAddress,
@@ -415,7 +450,6 @@ function ColdSend({ network, account, deployed, defaultScheme }: { network: Prod
         address: account,
         installHotTier: false,
       });
-      if (acct.address.toLowerCase() !== account.toLowerCase()) throw new Error('That key does not control this account.');
       const { userOpHash, hash } = await selfBundleUserOperation(wallet.data!, acct, { calls: [{ to, value }] });
       const receipt = await publicClientFor(network).waitForTransactionReceipt({ hash });
       setDone({ hash, ok: userOperationOutcome(receipt, userOpHash) === true });

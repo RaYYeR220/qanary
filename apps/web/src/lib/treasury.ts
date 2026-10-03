@@ -13,8 +13,10 @@ import {
 import { DEFAULT_LEVEL_BPS } from './bucket';
 import {
   createQanaryAccount,
+  keyBlob,
   keyStoreAbi,
   NATIVE_ASSET,
+  predictKeyPointer,
   SELF_BUNDLE_GAS,
   type Deployment,
   type HotSetup,
@@ -117,4 +119,20 @@ export async function newTreasuryAccount(
   });
   if (isAddressEqual(account.address, zeroAddress)) throw new Error('The EntryPoint could not work out the account address.');
   return account;
+}
+
+/**
+ * Whether `signer` is the root key the QuantumValidator holds for an account (`configOf`): the
+ * same key pointer and the verifier of its scheme. Checked before anything is signed, so a wrong
+ * phrase or scheme is refused here instead of by the EntryPoint after the wallet has paid.
+ */
+export function rootKeyMatches(
+  config: { verifier: Address; keyPtr: Address },
+  deployment: Deployment,
+  signer: PqSigner,
+): boolean {
+  const verifier = deployment.verifiers[signer.scheme];
+  if (!deployment.keyStore || !verifier) return false;
+  const pointer = predictKeyPointer(deployment.keyStore, keyBlob(signer));
+  return isAddressEqual(config.keyPtr, pointer) && isAddressEqual(config.verifier, verifier);
 }
