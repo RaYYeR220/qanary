@@ -2,48 +2,41 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import {
-  encodeFunctionData,
-  formatEther,
-  isAddress,
-  parseAbi,
-  parseEther,
-  zeroAddress,
-  type Address,
-  type Hash,
-  type Hex,
-} from 'viem';
+import { formatEther, isAddress, zeroAddress, type Address, type Hash, type Hex } from 'viem';
 import { useConnection, useWalletClient } from 'wagmi';
 import { DEFAULT_LEVEL_BPS, effectiveCap, formatDuration } from '@/lib/bucket';
 import { deploymentOf, explorerTx, publicClientFor, type ProductNetwork } from '@/lib/chain';
 import { explainError, type Explained } from '@/lib/errors';
 import { amount, gas } from '@/lib/format';
 import {
-  createQanaryAccount,
   generateMnemonic,
   keyBlob,
-  NATIVE_ASSET,
   pqSignerFromMnemonic,
   predictKeyPointer,
-  SELF_BUNDLE_GAS,
   selfBundleUserOperation,
-  storeKey,
   userOperationOutcome,
   type HotSetup,
   type KernelSmartAccount,
   type PqSigner,
   type Scheme,
 } from '@/lib/sdk';
+import {
+  fallbackVerifierAbi,
+  firstOperationCalls,
+  fundRequest,
+  hotSetupFor,
+  hotTierValid,
+  newTreasuryAccount,
+  parseCap,
+  prefundFor,
+  prepareKeyRequest,
+  storeKeyRequest,
+} from '@/lib/treasury';
 import { forgetVault, loadVault, openPhrase, rememberTreasury, saveVault, sealPhrase, type VaultRecord } from '@/lib/vault';
 import { BucketGauge } from './BucketGauge';
 import { Hex as HexText, Mark, NetworkPicker, Outcome, useSelectedNetwork, WalletBar } from './kit';
 import ui from './ui.module.css';
 import styles from './OpenTreasury.module.css';
-
-const fallbackAbi = parseAbi([
-  'function prepareKey(bytes key) returns (address)',
-  'function isPrepared(bytes key) view returns (bool)',
-]);
 
 const SCHEMES: { id: Scheme; label: string; note: string }[] = [
   { id: 'mldsa44', label: 'ML-DSA-44', note: 'FIPS 204. Works on every network, and in AWS KMS.' },
@@ -120,24 +113,10 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
   const [hotOn, setHotOn] = useState(true);
   const [hotCap, setHotCap] = useState('0.5');
   const [hotHours, setHotHours] = useState('24');
-  const hotCapWei = (() => {
-    try {
-      return parseEther(hotCap || '0');
-    } catch {
-      return null;
-    }
-  })();
+  const hotCapWei = parseCap(hotCap);
   const hours = Number(hotHours);
-  const hotValid = !hotOn || (hotCapWei !== null && hotCapWei > 0n && Number.isFinite(hours) && hours > 0 && hours <= 24 * 90);
-  const hot: HotSetup | undefined =
-    hotOn && conn.address && hotCapWei
-      ? {
-          window: Math.round(hours * 3600),
-          levelBps: DEFAULT_LEVEL_BPS,
-          signer: { family: 'secp256k1', eoa: conn.address },
-          assets: [{ asset: NATIVE_ASSET, cap: hotCapWei }],
-        }
-      : undefined;
+  const hotValid = !hotOn || hotTierValid(hotCapWei, hours);
+  const hot: HotSetup | undefined = hotOn && conn.address && hotCapWei && hotValid ? hotSetupFor(conn.address, hotCapWei, hours) : undefined;
 
   // ---------- II. the address ----------
   const [account, setAccount] = useState<KernelSmartAccount | null>(null);
@@ -156,7 +135,7 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
     setPredictError(null);
     if (!signer || !deployed) return;
     let live = true;
-    createQanaryAccount(client, {
+    newTreasuryAccount(client, {
       signer,
       registry: d.canaryRegistry ?? zeroAddress,
       deployment: d,
@@ -187,12 +166,10 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
       if (!on) return;
       setStored(!!code && code !== '0x');
       if (solidity && verifier) {
-        const ok = await client.readContract({ address: verifier, abi: fallbackAbi, functionName: 'isPrepared', args: [pointer] }).catch(() => null);
+        const ok = await client.readContract({ address: verifier, abi: fallbackVerifierAbi, functionName: 'isPrepared', args: [pointer] }).catch(() => null);
         if (on) setPrepared(ok);
         if (on && ok === false && conn.address) {
-          const g = await client
-            .estimateGas({ account: conn.address, to: verifier, data: encodeFunctionData({ abi: fallbackAbi, functionName: 'prepareKey', args: [pointer] }) })
-            .catch(() => null);
+          const g = await client.estimateGas({ account: conn.address, ...prepareKeyRequest(verifier, pointer) }).catch(() => null);
           if (on) setPrepareGas(g);
         }
       }
@@ -214,11 +191,7 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
       if (!on) return;
       setBalance(bal);
       setLive(!!code && code !== '0x');
-      if (fees?.maxFeePerGas) {
-        const limit = SELF_BUNDLE_GAS.verificationGasLimit + SELF_BUNDLE_GAS.callGasLimit + SELF_BUNDLE_GAS.preVerificationGas;
-        // a fifth on top: fees move between the estimate and the send
-        setPrefund((limit * fees.maxFeePerGas * 6n) / 5n);
-      }
+      if (fees?.maxFeePerGas) setPrefund(prefundFor(fees.maxFeePerGas));
     })();
     return () => {
       on = false;
@@ -245,37 +218,39 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
     }
   };
 
+  /** Sends one transaction from the wallet, lists it, and waits until it is mined and succeeded. */
+  const send = async (label: string, request: { to: Address; data?: Hex; value?: bigint }) => {
+    if (!wallet.data) return;
+    const hash = await wallet.data.sendTransaction(request);
+    setTxs((t) => [...t, { label, hash }]);
+    const receipt = await client.waitForTransactionReceipt({ hash });
+    if (receipt.status !== 'success') throw new Error(`The transaction reverted: ${explorerTx(network, hash)}`);
+  };
+
   const doStore = () =>
     run('store', async () => {
-      if (!wallet.data || !d.keyStore || !blob) return;
-      await storeKey(wallet.data, d.keyStore, blob);
+      if (!d.keyStore || !blob) return;
+      await send('Key stored in the key store', storeKeyRequest(d.keyStore, blob));
     });
 
   const doPrepare = () =>
     run('prepare', async () => {
-      if (!wallet.data || !verifier || !pointer) return;
-      const hash = await wallet.data.writeContract({ address: verifier, abi: fallbackAbi, functionName: 'prepareKey', args: [pointer] });
-      setTxs((t) => [...t, { label: 'Key prepared for the Solidity verifier', hash }]);
-      await client.waitForTransactionReceipt({ hash });
+      if (!verifier || !pointer) return;
+      await send('Key prepared for the Solidity verifier', prepareKeyRequest(verifier, pointer));
     });
 
   const doFund = () =>
     run('fund', async () => {
-      if (!wallet.data || !account || prefund === null) return;
-      const need = prefund - (balance ?? 0n);
-      if (need <= 0n) return;
-      const hash = await wallet.data.sendTransaction({ to: account.address, value: need });
-      setTxs((t) => [...t, { label: 'Account funded for its first operation', hash }]);
-      await client.waitForTransactionReceipt({ hash });
+      if (!account || prefund === null) return;
+      const request = fundRequest(account.address, prefund, balance ?? 0n);
+      if (request) await send('Account funded for its first operation', request);
     });
 
   const doCreate = () =>
     run('create', async () => {
       if (!wallet.data || !account || !conn.address) return;
       // the first operation deploys the account; the hot tier's install rides on it
-      const { userOpHash, hash } = await selfBundleUserOperation(wallet.data, account, {
-        calls: [{ to: conn.address, value: 0n }],
-      });
+      const { userOpHash, hash } = await selfBundleUserOperation(wallet.data, account, { calls: firstOperationCalls(conn.address) });
       const receipt = await client.waitForTransactionReceipt({ hash });
       const ok = userOperationOutcome(receipt, userOpHash) === true;
       setTxs((t) => [...t, { label: 'Account deployed by its first post-quantum operation', hash }]);
