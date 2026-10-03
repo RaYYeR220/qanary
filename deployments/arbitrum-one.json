@@ -1,0 +1,98 @@
+{
+  "network": "arbitrum-one",
+  "chainId": 42161,
+  "rpc": "https://arb1.arbitrum.io/rpc",
+  "deployer": "0xe46b3a14790f6fb24B0067475FC4C5875d1233cA",
+  "stylusActivations": "paused (Security Council, 2026-10-02): ML-DSA-44 runs on the Solidity verifier, the ladder is unavailable",
+  "evm": {
+    "keyStore": {
+      "address": "0x12cF4EE4073d5F3E5DE8bFE6e34522cEb46854f6",
+      "deployTx": "0x1657bf58ef5b7d94216f0740ccebaf1848165ce2ab3e3e0789e19cc1bd75b2ec",
+      "gasUsed": 453804,
+      "costWei": "9153227133804"
+    },
+    "quantumValidator": {
+      "address": "0x0057Fcac28c7094910D563Ad31E437d78a92036a",
+      "deployTx": "0x7cd5248e26f893620a1c3786d8dd458d9ba29825591e0d8ac4b3d61f1e8a8c2a",
+      "gasUsed": 2434735,
+      "costWei": "48787222364735"
+    },
+    "hotTierExecutor": {
+      "address": "0xE5A6EFCEAcdBFe96593f01F7770C1163B0C631f3",
+      "deployTx": "0x5762ff05a3e7be175d666fce3feddfafcbde59e4fa886256facee11295c9b94e",
+      "gasUsed": 4954756,
+      "costWei": "99105034466756"
+    },
+    "pqSafeOwnerFactory": {
+      "address": "0x4Ce066c253d38bFF3012607B0D3B1B4b8E29ABA3",
+      "deployTx": "0x248003b7299f22858a5567c6d4c96dcb7fea2d10a5b790a3b0aad88eb2acf5e9",
+      "gasUsed": 1250913,
+      "costWei": "25045781336913"
+    },
+    "qanaryAccountFactory": {
+      "address": "0xdbEEAA8CC79A925b42A5F42f3F1bA81afC132609",
+      "deployTx": "0x853da640345e70ffbbed1a9361bcade614695357fd932812e4b2ff70fa11f398",
+      "gasUsed": 5743154,
+      "costWei": "115150243443154"
+    },
+    "canaryRegistry": {
+      "address": "0x4848512a663F59fA23708C1Fa2f1cEA21B888A95",
+      "ladder": "0xBf33F4FE6D73fEcDE03E388f4FE985fe1d88b9D6",
+      "bountyToken": "0x004B506865409877C9fA29bfb1ebA929984B9bbC",
+      "deployTx": "0xa06ff3f26b825011c495d1c7966de5262e796c7a84ebeb99e49863e991c6a317",
+      "gasUsed": 2125134,
+      "costWei": "42557935609134"
+    },
+    "drillRegistryFactory": {
+      "address": "0xA523899D17954a5BeE0Ee102124C458942878032",
+      "ladder": "0xBf33F4FE6D73fEcDE03E388f4FE985fe1d88b9D6",
+      "bountyToken": "0x004B506865409877C9fA29bfb1ebA929984B9bbC",
+      "deployTx": "0xf13fdc9f34544eaf4f9a28d23cde66bf3fa5f9774a9b8665a8db3d4fde581981",
+      "gasUsed": 2635092,
+      "costWei": "52701842635092"
+    },
+    "ladderUnavailable": {
+      "address": "0xBf33F4FE6D73fEcDE03E388f4FE985fe1d88b9D6",
+      "deployTx": "0xb37e0ef2feec4e4def108acf0cd8ce80f4e0319c68a65f89d0269f6a7056aad0",
+      "gasUsed": 108987,
+      "costWei": "2179740108987"
+    },
+    "keccakF1600Helper": {
+      "address": "0x68b5C1b28707AC3201880d59f27cFc6583D4FF8D",
+      "deployTx": "0x1397a42d94b7037343b6651bffb64e9e8a6d2c7de1dd13ee20a2451a868abec2",
+      "gasUsed": 4719182,
+      "costWei": "94751740915182"
+    },
+    "mldsa44VerifierCore": {
+      "address": "0xf2d5c07ae3817B8bbDf57970369a6604377e588E",
+      "deployTx": "0x17118eb2a6351c0bfd960d4b7675442b2bbb5384e74f5181c3e6c7c313e395ab",
+      "gasUsed": 5209232,
+      "costWei": "104455525273232"
+    },
+    "mldsa44ExpandedKeyStore": {
+      "address": "0x49fdfaCaf748cbe2F9adb4cAeE50F87582CEf8f5",
+      "deployTx": "0x671ac654e13d58762241f27eadafb38821325421de65bcc8d4b00b73b1ce4a02",
+      "gasUsed": 1122350,
+      "costWei": "22469448122350"
+    },
+    "mldsa44SolidityVerifier": {
+      "address": "0xc9C7B3B71f4A3451adeb29604bd8eA789F3F2EfE",
+      "deployTx": "0xe9aedfd48a270a5b90bd12e0ec3e93ab8083c4dd46b6a2ae4d2ba4bde617cc75",
+      "gasUsed": 840339,
+      "costWei": "16815184230339"
+    }
+  },
+  "nonceAlignment": {
+    "note": "empty self-transfers that align the deployer nonce with ApeChain, so the shared contracts have the same addresses",
+    "txs": [
+      "0x4b073b25c181da490e208163cc8bcea1d6ee4758bed1cec263af16a66244eaa1",
+      "0xc532fafaac46868c6e62a77bc6c5ff99ff8b297f26bf4f88e3641411a89efd58",
+      "0xa495df5f25739834d1bfafb4fcd1f16664313725767518d77da80f578699e5c4",
+      "0x5e70f8e11e012ae895f4b107b37e4d2cce13bab22fe251428d47ba542efb89f1",
+      "0xd20c1a5681a1f51cf400082d8b7de4cd5c91f00fe0168fe6da8bed758ebc619a",
+      "0x4c67e59f79b578609073c75674ffc2885abc69577e4dc42c9feb65b9b3baf0ff",
+      "0x2a60f282972b7118517bc1948ba0a7fc21281392eefdfc4034dd3214338585a3",
+      "0x2699d1cb3db254968fef80225beb05d25acca72d83a4db28ba0e8bf0125cabbb"
+    ]
+  }
+}
