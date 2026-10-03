@@ -1,6 +1,6 @@
 .footer {
   border-top: var(--hairline) solid var(--rule);
-  padding: var(--s5) var(--gutter) var(--s3);
+  padding: var(--s5) var(--frame) var(--s3);
 }
 
 .close {

@@ -1,7 +1,7 @@
 .section {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  padding: var(--s5) var(--gutter);
+  padding: var(--s5) var(--frame);
   border-top: var(--hairline) solid var(--rule);
 }
 

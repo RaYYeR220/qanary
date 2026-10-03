@@ -51,7 +51,7 @@
 
 /* compact on a phone: the plate is sized so the ladder under it stays in the first screen */
 .plateBox {
-  width: clamp(12rem, calc((100svh - 30.5rem) * 0.746), 100%);
+  width: clamp(10rem, calc((100svh - 30.5rem) * 0.746), 100%);
   margin-inline: auto;
 }
 
@@ -139,7 +139,7 @@
     column-gap: clamp(2.5rem, 5vw, 6.5rem);
     row-gap: 0;
     min-height: 100svh;
-    padding: var(--s2) var(--gutter);
+    padding: var(--s2) var(--frame-wide);
   }
 
   .figure {
@@ -173,5 +173,21 @@
     margin-top: var(--s4);
     padding-top: var(--s2);
     border-top: var(--hairline) solid var(--rule);
+  }
+}
+
+/* Very wide screens: the plate at its full height and the words beside it, the pair centred as one
+   spread instead of two halves of the page. The plate never takes more than what the words leave. */
+@media (min-width: 100em) {
+  .hero {
+    grid-template-columns: auto minmax(0, 36rem);
+    justify-content: center;
+  }
+
+  .figure {
+    width: min(
+      calc((100svh - 8.5rem) * 0.746 + 1.9rem),
+      calc(100vw - var(--rail) - 2 * var(--gutter) - 36rem - clamp(2.5rem, 5vw, 6.5rem) - 2rem)
+    );
   }
 }

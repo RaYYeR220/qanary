@@ -1,7 +1,6 @@
 .figures {
   display: grid;
-  gap: var(--s2);
-  max-width: 54rem;
+  gap: var(--s2) var(--s4);
 }
 
 .figure {
@@ -17,9 +16,6 @@
 .chronology {
   list-style: none;
   margin-top: var(--s2);
-  max-width: 46rem;
-  /* the spine of the almanac */
-  background: linear-gradient(var(--rule-strong), var(--rule-strong)) 5.25rem 0 / 1px 100% no-repeat;
 }
 
 .year {
@@ -27,6 +23,8 @@
   grid-template-columns: 4.5rem minmax(0, 1fr);
   column-gap: 1.5rem;
   padding-block: var(--s0);
+  /* the spine of the almanac, drawn year by year so it runs on across columns */
+  background: linear-gradient(var(--rule-strong), var(--rule-strong)) 5.25rem 0 / 1px 100% no-repeat;
 }
 
 .year[data-empty='true'] {
@@ -104,5 +102,17 @@
   .figures {
     grid-template-columns: 1fr 1fr;
     gap: var(--s3);
+  }
+}
+
+/* Wide screens: the almanac in two columns across the text column */
+@media (min-width: 90em) {
+  .chronology {
+    columns: 2;
+    column-gap: var(--s4);
+  }
+
+  .year {
+    break-inside: avoid;
   }
 }

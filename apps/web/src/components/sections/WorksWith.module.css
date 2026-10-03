@@ -3,7 +3,6 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   border-top: var(--hairline) solid var(--rule-strong);
-  max-width: 60rem;
 }
 
 .entry {

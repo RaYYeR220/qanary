@@ -2,7 +2,7 @@
    italic labels, typeset ledgers, a plate-mark round the primary action. */
 
 .page {
-  padding: var(--s3) var(--gutter) var(--s5);
+  padding: var(--s3) var(--frame) var(--s5);
 }
 
 .head {

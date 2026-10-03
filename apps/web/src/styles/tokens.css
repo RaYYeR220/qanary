@@ -78,7 +78,7 @@
   --lead-display: 1.08;
   --lead-text: 1.62;
   --lead-small: 1.45;
-  --measure: 62ch;
+  --measure: 68ch;
   --measure-narrow: 44ch;
 
   /* space: x1.5 from 12 */
@@ -104,6 +104,15 @@
   --hairline: 1px;
   --rail: 6rem;
   --margin-col: 13.5rem;
+
+  /* The page's content column. Every page block runs full bleed (its rules and borders reach the
+     edges) and pads its content into one column, centred between the left edge and the rail, no
+     wider than --container; the hero's plate-and-words spread may take --container-wide. Below
+     those widths the padding is the gutter. Prose keeps to --measure inside the column. */
+  --container: 82rem;
+  --container-wide: 94rem;
+  --frame: max(var(--gutter), calc((100% - var(--container)) / 2));
+  --frame-wide: max(var(--gutter), calc((100% - var(--container-wide)) / 2));
 
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --t-fast: 160ms;
