@@ -14,8 +14,9 @@ export default function VerifyPage() {
     <main className={ui.page}>
       <ProductHeader plate="XXI" title="Check a post-quantum signature on-chain.">
         <p>
-          Make a key here, sign a message with it, and ask the deployed verifiers whether the signature holds. It
-          needs no wallet and no account: the check is a read-only call, the same one a Qanary account makes before
+          Replay a signature AWS KMS made for a live treasury, or make a key here and sign with it, and ask the
+          deployed verifiers whether the signature holds: the Stylus program on ApeChain and the Solidity verifier on
+          Arbitrum One. It needs no wallet: the check is a read-only call, the same one a Qanary account makes before
           it lets the post-quantum key act.
         </p>
       </ProductHeader>

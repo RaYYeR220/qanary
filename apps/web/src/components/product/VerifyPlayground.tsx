@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { bytesToHex, keccak256, size, stringToBytes, type Address, type Hex } from 'viem';
+import { bytesToHex, decodeFunctionData, encodeFunctionData, keccak256, parseAbi, size, stringToBytes, type Address, type Hex } from 'viem';
+import { entryPoint07Abi } from 'viem/account-abstraction';
 import { publicClientFor, deploymentOf, type ProductNetwork } from '@/lib/chain';
 import { explainError, type Explained } from '@/lib/errors';
 import { gas } from '@/lib/format';
@@ -9,6 +10,11 @@ import { keyBlob, pqSignerFromSeed, PUBLIC_KEY_BYTES, SIGNATURE_BYTES, verifyOnC
 import { Hex as HexText, Mark, Outcome } from './kit';
 import ui from './ui.module.css';
 import styles from './VerifyPlayground.module.css';
+
+const fallbackAbi = parseAbi([
+  'function prepareKey(bytes key) returns (address)',
+  'function isPrepared(bytes key) view returns (bool)',
+]);
 
 const SCHEME_LABEL: Record<Scheme, string> = { mldsa44: 'ML-DSA-44', mldsa65: 'ML-DSA-65', falcon512: 'Falcon-512' };
 
@@ -25,7 +31,8 @@ type Check =
   | { state: 'running' }
   | { state: 'none'; reason: string }
   | { state: 'done'; valid: boolean; gas: bigint; ms: number; verifier: Address }
-  | { state: 'error'; error: Explained; verifier: Address };
+  | { state: 'error'; error: Explained; verifier: Address }
+  | { state: 'unprepared'; cost: bigint | null; verifier: Address };
 
 /** Flips every bit of one byte in the middle of the signature. */
 function tamper(sig: Hex): Hex {
@@ -91,6 +98,21 @@ export function VerifyPlayground({ networks }: { networks: ProductNetwork[] }) {
       columns.map(async (n) => {
         const v = verifierFor(n, signed.scheme);
         if (!v.address) return;
+        if (n.stylus === 'paused') {
+          // the Solidity verifier only checks keys prepared on-chain once; a key made a moment ago is not
+          const client = publicClientFor(n);
+          const prepared = await client
+            .readContract({ address: v.address, abi: fallbackAbi, functionName: 'isPrepared', args: [signed.key] })
+            .catch(() => false);
+          if (!prepared) {
+            const cost = await client
+              .estimateGas({ to: v.address, data: encodeFunctionData({ abi: fallbackAbi, functionName: 'prepareKey', args: [signed.key] }) })
+              .catch(() => null);
+            next[n.key] = { state: 'unprepared', cost, verifier: v.address };
+            setChecks({ ...next });
+            return;
+          }
+        }
         const t0 = performance.now();
         try {
           const r = await verifyOnChain(publicClientFor(n), v.address, signed.key, signed.hash, sig);
@@ -105,9 +127,10 @@ export function VerifyPlayground({ networks }: { networks: ProductNetwork[] }) {
 
   return (
     <div className={ui.body}>
+      <KmsReplay networks={networks} />
       <section className={ui.panel} aria-labelledby="sign-h">
         <h2 id="sign-h" className={ui.h2}>
-          Sign in this page
+          Or sign in this page
         </h2>
         <p className={ui.small}>
           A fresh key is generated in your browser from 32 random bytes and thrown away when you leave. The message
@@ -206,6 +229,15 @@ export function VerifyPlayground({ networks }: { networks: ProductNetwork[] }) {
                       </div>
                     ))}
                   {c.state === 'error' && <Outcome error={c.error} />}
+                  {c.state === 'unprepared' && (
+                    <p className={ui.small}>
+                      <Mark state="pending">Not called.</Mark> The Solidity verifier checks a key only after it has been
+                      prepared on-chain once: <span className={ui.italic}>prepareKey</span> expands it and stores the
+                      result, {c.cost !== null ? <>about {gas(c.cost)}, </> : null}paid once per key by whoever submits it. A
+                      key made a moment ago is not prepared, so the call would revert with KeyNotPrepared. The AWS KMS
+                      key above is prepared; replay it to compare the two verifiers on one signature.
+                    </p>
+                  )}
                 </article>
               );
             })}
@@ -218,5 +250,152 @@ export function VerifyPlayground({ networks }: { networks: ProductNetwork[] }) {
         20-byte pointer instead.
       </p>
     </div>
+  );
+}
+
+type Replay = Record<string, Check>;
+
+/**
+ * Replays a signature AWS KMS produced for a live treasury: the post-quantum
+ * signature of its first user operation, read from the transaction that carried
+ * it, checked against its stored key on both networks.
+ */
+function KmsReplay({ networks }: { networks: ProductNetwork[] }) {
+  const arb = networks.find((n) => n.key === 'arbitrum-one');
+  const ape = networks.find((n) => n.key === 'apechain');
+  const [tampered, setTampered] = useState(false);
+  const [checks, setChecks] = useState<Replay>({});
+  const [sig, setSig] = useState<Hex | null>(null);
+  const [error, setError] = useState<Explained | null>(null);
+  const run = arb?.run;
+  if (!arb || !ape || !run?.rootKeyPointer || !run.pqUserOpHash || !run.pqUserOpTx) return null;
+  const columns = [ape, arb];
+  const key = run.rootKeyPointer;
+  const hash = run.pqUserOpHash;
+  const txHash = run.pqUserOpTx;
+  const account = arb.heroes[0]?.address;
+
+  const replay = async () => {
+    setError(null);
+    try {
+      let signature = sig;
+      if (!signature) {
+        const tx = await publicClientFor(arb).getTransaction({ hash: txHash });
+        const { args } = decodeFunctionData({ abi: entryPoint07Abi, data: tx.input });
+        const ops = args[0] as readonly { signature: Hex }[];
+        signature = ops[0]!.signature;
+        setSig(signature);
+      }
+      const used = tampered ? tamper(signature) : signature;
+      const next: Replay = Object.fromEntries(columns.map((n) => [n.key, { state: 'running' } as Check]));
+      setChecks({ ...next });
+      await Promise.all(
+        columns.map(async (n) => {
+          const v = verifierFor(n, 'mldsa44').address;
+          if (!v) {
+            next[n.key] = { state: 'none', reason: 'This verifier is deploying.' };
+            setChecks({ ...next });
+            return;
+          }
+          const t0 = performance.now();
+          try {
+            const r = await verifyOnChain(publicClientFor(n), v, key, hash, used);
+            next[n.key] = { state: 'done', valid: r.valid, gas: r.gas, ms: Math.round(performance.now() - t0), verifier: v };
+          } catch (e) {
+            next[n.key] = { state: 'error', error: explainError(e, n.nativeSymbol), verifier: v };
+          }
+          setChecks({ ...next });
+        }),
+      );
+    } catch (e) {
+      setError(explainError(e));
+    }
+  };
+
+  const apeGas = checks.apechain?.state === 'done' ? checks.apechain.gas : null;
+  const arbGas = checks['arbitrum-one']?.state === 'done' ? checks['arbitrum-one'].gas : null;
+
+  return (
+    <section className={ui.panel} aria-labelledby="kms-h">
+      <div className={ui.panelHead}>
+        <h2 id="kms-h" className={ui.h2}>
+          Replay a signature from AWS KMS
+        </h2>
+        <label className={ui.check}>
+          <input type="checkbox" checked={tampered} onChange={(e) => setTampered(e.target.checked)} />
+          Tamper with one byte
+        </label>
+      </div>
+      <p className={ui.small}>
+        A live treasury{account ? <> (<HexText value={account} network={arb} />)</> : null} keeps its root key in an AWS KMS
+        HSM. Its first operation on {arb.name} carried an ML-DSA-44 signature by that key over the operation&rsquo;s hash.
+        This reads the signature from{' '}
+        <a href={`${arb.explorer}/tx/${txHash}`} target="_blank" rel="noreferrer">
+          that transaction
+        </a>{' '}
+        and asks both verifiers about the same key, hash and signature: the Stylus program on ApeChain and the Solidity
+        verifier on Arbitrum One.
+      </p>
+      <dl className={ui.ledger}>
+        <dt>Key pointer</dt>
+        <dd>
+          <HexText value={key} kind="none" />
+        </dd>
+        <dt>Signed hash</dt>
+        <dd>
+          <HexText value={hash} kind="none" />
+        </dd>
+        {sig && (
+          <>
+            <dt>Signature</dt>
+            <dd>
+              {size(sig).toLocaleString('en-US')} bytes, <HexText value={sig} kind="none" />
+            </dd>
+          </>
+        )}
+      </dl>
+      <div>
+        <button type="button" className={ui.button} onClick={() => void replay()}>
+          {tampered ? 'Replay the tampered signature' : 'Replay on both networks'}
+        </button>
+      </div>
+      {error && <Outcome error={error} />}
+      <div className={styles.columns}>
+        {columns.map((n) => {
+          const c = checks[n.key] ?? { state: 'idle' };
+          return (
+            <article key={n.key} className={styles.column} aria-live="polite">
+              <h3 className={ui.h3}>{n.name}</h3>
+              <p className={`${ui.small} ${ui.muted}`}>{n.stylus === 'paused' ? 'Solidity verifier' : 'Arbitrum Stylus verifier'}</p>
+              {c.state === 'idle' && <Mark state="idle">Not asked yet</Mark>}
+              {c.state === 'running' && <Mark state="pending">Asking…</Mark>}
+              {c.state === 'none' && <Mark state="deploying">{c.reason}</Mark>}
+              {c.state === 'done' &&
+                (c.valid ? (
+                  <div className={styles.verdict}>
+                    <Mark state="ok">Valid</Mark>
+                    <span className={styles.gas}>{gas(c.gas)}</span>
+                    <span className={`${ui.small} ${ui.muted}`}>
+                      <HexText value={c.verifier} network={n} />
+                    </span>
+                  </div>
+                ) : (
+                  <div className={ui.stamp}>
+                    <span className={ui.stampWord}>Refused</span>
+                    <span>The tampered signature does not verify.</span>
+                    <span className={ui.stampName}>{gas(c.gas)}</span>
+                  </div>
+                ))}
+              {c.state === 'error' && <Outcome error={c.error} />}
+            </article>
+          );
+        })}
+      </div>
+      {apeGas !== null && arbGas !== null && (
+        <p className={ui.text}>
+          Same key, same hash, same signature: Stylus checks it for {gas(apeGas)}, Solidity for {gas(arbGas)}.
+        </p>
+      )}
+    </section>
   );
 }
