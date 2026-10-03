@@ -51,7 +51,7 @@
 
 /* compact on a phone: the plate is sized so the ladder under it stays in the first screen */
 .plateBox {
-  width: clamp(12rem, calc((100svh - 28.75rem) * 0.746), 100%);
+  width: clamp(12rem, calc((100svh - 30.5rem) * 0.746), 100%);
   margin-inline: auto;
 }
 
