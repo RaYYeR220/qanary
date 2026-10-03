@@ -286,8 +286,8 @@ export function Dashboard({ network, account }: { network: ProductNetwork; accou
             The live run
           </h2>
           <p className={ui.small}>
-            This treasury was opened by the recorded end-to-end run. Every step is on-chain; the refusals are the
-            account working as designed.
+            This treasury was opened by the recorded end-to-end run. Every step is on-chain
+            {run.some((r) => r.error) ? '; the refusals are the account working as designed.' : '.'}
           </p>
           <ol className={styles.run}>
             {run.map((r) => {
