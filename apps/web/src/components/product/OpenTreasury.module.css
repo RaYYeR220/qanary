@@ -62,3 +62,11 @@
     grid-column: 1 / -1;
   }
 }
+
+.preview {
+  display: grid;
+  gap: var(--s0);
+  justify-items: start;
+  max-width: 34rem;
+  margin: 0;
+}

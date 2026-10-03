@@ -14,7 +14,7 @@ import {
   type Hex,
 } from 'viem';
 import { useConnection, useWalletClient } from 'wagmi';
-import { DEFAULT_LEVEL_BPS } from '@/lib/bucket';
+import { DEFAULT_LEVEL_BPS, effectiveCap, formatDuration } from '@/lib/bucket';
 import { deploymentOf, explorerTx, publicClientFor, type ProductNetwork } from '@/lib/chain';
 import { explainError, type Explained } from '@/lib/errors';
 import { amount, gas } from '@/lib/format';
@@ -35,6 +35,7 @@ import {
   type Scheme,
 } from '@/lib/sdk';
 import { forgetVault, loadVault, openPhrase, rememberTreasury, saveVault, sealPhrase, type VaultRecord } from '@/lib/vault';
+import { BucketGauge } from './BucketGauge';
 import { Hex as HexText, Mark, NetworkPicker, Outcome, useSelectedNetwork, WalletBar } from './kit';
 import ui from './ui.module.css';
 import styles from './OpenTreasury.module.css';
@@ -496,6 +497,16 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
                 Hot key: {conn.address ? <HexText value={conn.address} network={network} /> : 'connect a wallet'}
               </p>
             </div>
+          )}
+          {hotOn && hotCapWei !== null && hotCapWei > 0n && (
+            <figure className={styles.preview}>
+              <BucketGauge scale={1} available={1} label={`Your cap: ${hotCap} ${network.nativeSymbol}, full`} />
+              <figcaption className={ui.small}>
+                Full at {amount(hotCapWei)} {network.nativeSymbol}, refilling over {Number.isFinite(hours) && hours > 0 ? formatDuration(hours * 3600) : '…'}.
+                By default the tripwire takes it to {amount(effectiveCap(hotCapWei, DEFAULT_LEVEL_BPS[1]))} at the first
+                rung, {amount(effectiveCap(hotCapWei, DEFAULT_LEVEL_BPS[2]))} at the second, and freezes it at the third.
+              </figcaption>
+            </figure>
           )}
         </Step>
 
