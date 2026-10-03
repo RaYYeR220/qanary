@@ -76,18 +76,18 @@ The end-to-end run deploys a treasury account with an ML-DSA-44 root, moves fund
 
 ## Run the tests (optional)
 
-Each suite runs with one command from the repository root after `git submodule update --init --recursive`; a first Rust build takes a few minutes. The results are from 2 October 2026:
+Each suite runs with one command from the repository root after `git submodule update --init` (without `--recursive`, so the Solidity build matches the deployed bytecode byte for byte) and `pnpm install`; a first Rust build takes a few minutes. The first three rows and the last were measured on 3 October 2026. The fork and Stylus rows are the last recorded runs against the same contract sources, after the audit fixes; each needs the setting shown in its command:
 
 | Suite | Command | Result |
 |---|---|---|
 | Rust cores and Stylus contracts | `cargo test --release --workspace` | 81 passed |
-| Solidity modules and fallback verifier | `cd contracts/evm && forge test` | 245 passed, 39 skipped |
-| TypeScript SDK | `pnpm install && pnpm -r test` | 152 passed, 3 skipped |
-| Arbitrum One fork (real Kernel, Safe, EntryPoint, USDG) | `cd contracts/evm && ARB_ONE_RPC=your_archive_rpc_url forge test --match-path 'test/fork/*'` | 21 passed at block 511,050,000 |
-| Stylus WASM inside Foundry | `ARBOS_FORGE=path_to_arbos_forge scripts/stylus-test.sh` | 7 passed, 11 skipped |
+| Solidity modules and fallback verifier | `cd contracts/evm && forge test` | 292 passed, 41 skipped |
+| TypeScript SDK | `pnpm --filter @qanary/sdk test` | 161 passed, 3 skipped |
+| Arbitrum One fork (real Kernel, Safe, EntryPoint, USDG) | `cd contracts/evm && ARB_ONE_RPC=your_archive_rpc_url forge test --match-path 'test/fork/*'` | 22 passed at block 511,050,000 |
+| Stylus WASM inside Foundry | `ARBOS_FORGE=path_to_arbos_forge scripts/stylus-test.sh` | 8 passed, 11 skipped |
 | Proof tables match the deployment records | `pnpm proof --check` | exit code 0 |
 
-The 39 skipped Foundry tests are the fork suite and the Stylus suite, which need the settings shown in their own rows. Three fallback tests sign live with `@noble/post-quantum`; run `npm ci` in `scripts/devsign` once, or they skip and the count reads 242 passed. The SDK skips its live AWS KMS and live Arbitrum One scanner tests unless `QANARY_KMS_KEY_ID` or `QANARY_LIVE=1` is set. The 11 skipped Stylus tests read keys from KeyStore pointers, which arbos-forge v0.1.1 overcharges; the live end-to-end run covers that path.
+The 41 skipped Foundry tests are the fork suite (22) and the Stylus suite (19), which need the settings shown in their own rows. `forge test` runs with FFI enabled: five fallback tests call `node scripts/devsign/devsign.mjs` to sign live with `@noble/post-quantum`. Run `npm ci` in `scripts/devsign` once, or they skip and the count reads 287 passed, 46 skipped. `pnpm -r test` runs the SDK and the web app tests (14 more). The SDK skips its live AWS KMS and live Arbitrum One scanner tests unless `QANARY_KMS_KEY_ID` or `QANARY_LIVE=1` is set. The fork suite needs an archive RPC for block 511,050,000; public pruned RPCs fail. The 11 skipped Stylus tests read keys from KeyStore pointers, which arbos-forge v0.1.1 overcharges; the live end-to-end run covers that path.
 
 ## Where each claim is proven
 
@@ -95,10 +95,10 @@ The 39 skipped Foundry tests are the fork suite and the Stylus suite, which need
 
 | Claim | Where to check |
 |---|---|
-| Stylus verifies ML-DSA-44, ML-DSA-65 and Falcon-512 on a public Arbitrum chain | The `cast` calls above; [PROOF.md](PROOF.md) |
+| Stylus verifies ML-DSA-44, ML-DSA-65 and Falcon-512 on ApeChain, a public Arbitrum Orbit chain | The `cast` calls above; [PROOF.md](PROOF.md) |
 | 9x to 18x cheaper than the cheapest Solidity verifiers | [BENCHMARKS.md](BENCHMARKS.md), with sources and commits |
 | NIST conformance | `cargo test --release -p qanary-pq` (ACVP and round-3 KAT vectors) |
-| The hot key’s loss is capped and it can never approve or touch modules | `forge test --match-contract HotTierExecutor`; the over-cap transaction above |
+| The hot key’s loss is capped, and it can never call the five common approval selectors or an installed module | `forge test --match-contract HotTierExecutor`; the over-cap transaction above |
 | The tripwire is ownerless, one-way and cannot be front-run | `forge test --match-contract QuantumCanaryRegistryTest`; the drill claim above |
 | Works with the real Kernel v3.3, Safe 1.3.0 and OpenZeppelin accounts | The Arbitrum One fork suite |
 | What Qanary does not protect | [README](README.md#not-in-scope-and-honest-limits) and [SECURITY.md](SECURITY.md#known-limits) |

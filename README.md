@@ -22,7 +22,7 @@ Three tiers protect one account. The post-quantum key holds every power, the cla
 | Tier | Contract | Signer | What it can do |
 |---|---|---|---|
 | Cold root | `QuantumValidator`, the account’s root ERC-7579 validator | ML-DSA-44, ML-DSA-65 or Falcon-512 key, held in a browser or in AWS KMS (ML-DSA-44) | Everything: user operations of any size, module changes, key rotation, ERC-1271 signatures |
-| Hot tier | `HotTierExecutor`, an ERC-7579 executor and Safe module | ECDSA EOA or passkey (P-256) | Transfers of tracked assets inside a per-asset leaky-bucket cap, plus calls the root allowlisted. Never approvals, module calls, user operations or ERC-1271 signatures |
+| Hot tier | `HotTierExecutor`, an ERC-7579 executor and Safe module | ECDSA EOA or passkey (P-256) | Transfers of tracked assets inside a per-asset leaky-bucket cap, plus calls the root allowlisted. Never the five common approval selectors (`approve`, `increaseAllowance`, `setApprovalForAll`, Permit2 `approve`, EIP-2612 `permit`), calls to installed modules, user operations or ERC-1271 signatures |
 | Tripwire | `QuantumCanaryRegistry`, ownerless and one-way | Anyone who can sign for one of its nothing-up-my-sleeve keys | Raise the threat level, which scales hot caps down or freezes the hot tier; mark secp256k1 or P-256 broken forever |
 
 The registry guards five public keys derived by hashing a public tag to a curve point, so nobody knows their private keys. A claim is an ECDSA signature by one of those keys over a message bound to the chain, the registry, the target and the claimant, so it cannot be front-run, and it pays the target’s bounty to the claimant:
@@ -103,15 +103,16 @@ The Stylus verifiers run on ApeChain, an Arbitrum Orbit L3 that settles to Arbit
 
 ## Build and test
 
-You need Rust (the toolchain file pins 1.95.0 with the `wasm32-unknown-unknown` target), [Foundry](https://getfoundry.sh), Node.js 22 or later with pnpm 9, and Python 3 for the vector scripts. Fetch the Solidity dependencies first with `git submodule update --init --recursive`. Each suite runs with one command from the repository root:
+You need Rust (the toolchain file pins 1.95.0 with the `wasm32-unknown-unknown` target), [Foundry](https://getfoundry.sh), Node.js 22.6 or later with pnpm 9, and Python 3 for the vector scripts. Fetch the Solidity dependencies first with `git submodule update --init` (without `--recursive`: OpenZeppelin’s nested test submodules add Foundry remappings that change the metadata hash at the end of the compiled bytecode, so the build no longer matches the deployed contracts byte for byte). Each suite runs with one command from the repository root:
 
 ```bash
 cargo test --release --workspace        # Rust cores and Stylus contracts
+(cd scripts/devsign && npm ci)          # live ML-DSA signer for five Foundry tests
 (cd contracts/evm && forge test)        # Solidity modules and fallback verifier
-pnpm install && pnpm -r test            # TypeScript SDK
+pnpm install && pnpm -r test            # TypeScript SDK and web app
 ```
 
-On 2 October 2026 these report 81 Rust tests passing, 245 Foundry tests passing with 39 skipped, and 152 SDK tests passing with 3 skipped. The skipped Foundry tests are the Arbitrum One fork suite, which needs an archive RPC in `ARB_ONE_RPC`, and the Stylus suite, which needs arbos-forge. Three fallback-verifier tests sign live through `scripts/devsign`; run `npm ci` there once or they skip. [JUDGES.md](JUDGES.md) has the command for each optional suite.
+On 3 October 2026 these report 81 Rust tests passing; 292 Foundry tests passing with 41 skipped; and 161 SDK tests passing with 3 skipped, plus 14 web app tests passing (`pnpm --filter @qanary/sdk test` runs the SDK alone). The 41 skipped Foundry tests are the Arbitrum One fork suite (22 tests), which needs an archive RPC in `ARB_ONE_RPC`, and the Stylus suite (19 tests), which needs arbos-forge. Five fallback-verifier tests sign live through `scripts/devsign` over Foundry’s FFI; without `npm ci` there they skip, and the count reads 287 passed with 46 skipped. The fork suite last passed 22 of 22 and the Stylus suite 8 with 11 skipped; [JUDGES.md](JUDGES.md) has the command for each optional suite.
 
 | Variable | Used by | Purpose |
 |---|---|---|
@@ -119,7 +120,8 @@ On 2 October 2026 these report 81 Rust tests passing, 245 Foundry tests passing 
 | `ARBOS_FORGE` | `scripts/stylus-test.sh` | Path to the arbos-forge v0.1.1 binary that runs Stylus WASM inside Foundry |
 | `DEPLOYER_PRIVATE_KEY` | deployment and e2e scripts | Funds deployments and test accounts |
 | `QANARY_KMS_KEY_ID`, `AWS_REGION` | SDK live tests, e2e | An AWS KMS `ML_DSA_44` key for the KMS signer |
-| `BUNDLER_URL`, `ZERODEV_PROJECT_ID` | e2e | ERC-4337 bundler; without one the scripts self-bundle `handleOps` |
+
+The end-to-end script has no bundler option: it always self-bundles `EntryPoint.handleOps` from the deployer wallet.
 
 ## Create an account with the SDK
 
@@ -156,12 +158,18 @@ const account = await createQanaryAccount(client, {
   signer,
   registry: requireContract(d, 'canaryRegistry'),
 });
-await wallet.sendTransaction({ to: account.address, value: parseEther('0.5') });
+const fund = await wallet.sendTransaction({ to: account.address, value: parseEther('0.5') });
+await client.waitForTransactionReceipt({ hash: fund });
 
 const { hash } = await selfBundleUserOperation(wallet, account, {
   calls: [{ to: wallet.account.address, value: parseEther('0.1') }],
+  verificationGasLimit: 1_000_000n,
+  callGasLimit: 500_000n,
+  preVerificationGas: 60_000n,
 });
 ```
+
+The gas limits are part of the signed operation, and the EntryPoint takes a prefund of `(verificationGasLimit + callGasLimit + preVerificationGas) × maxFeePerGas` from the account before it runs the call. At ApeChain’s fee estimate on 3 October 2026 (122 gwei: a 101.7 gwei base fee plus viem’s 20% margin), these limits need a prefund of about 0.19 APE, so 0.5 APE covers it and the 0.1 APE transfer; unused gas is refunded. The SDK defaults (`SELF_BUNDLE_GAS`, 4.1M gas) would need about 0.50 APE for the prefund alone. The recorded end-to-end run deployed an ML-DSA-44 account and made its first transfer with the same limits, using 532,209 gas.
 
 To hold the root key in an HSM, replace the mnemonic signer with `await kmsSigner({ keyId: 'your_kms_key_id' })`, which signs with AWS KMS `ML_DSA_SHAKE_256` over the raw 32-byte hash. Pass `hot` to `createQanaryAccount` to install the hot tier in the same first operation. `packages/sdk/scripts/e2e.ts` runs the whole flow on a network and records every transaction in `deployments/<network>.json`.
 
@@ -198,8 +206,11 @@ Qanary protects account authorization on Arbitrum chains. These limits apply tod
 - **Stylus activations are paused on Arbitrum One and Nova**: Arbitrum One accounts use the Solidity verifier, and the ladder rungs L1 to L3 need the Stylus ladder verifier, so only K1 and R1 can be claimed there until activations resume
 - **Stylus programs expire**: an activation lasts 365 days. A keepalive (`ArbWasm.codehashKeepalive`, allowed 31 days after activation) must renew every verifier, because an expired verifier stops validating every account that uses it until someone reactivates it
 - **`ruint` advisory**: stylus-sdk 0.10.9 pins `ruint` below 1.17, a range that [RUSTSEC-2025-0137](https://rustsec.org/advisories/RUSTSEC-2025-0137.html) flags ([stylus-sdk-rs#455](https://github.com/OffchainLabs/stylus-sdk-rs/issues/455)). Qanary code never calls `ruint` division
-- **Third-party cryptography**: `@noble/post-quantum` 0.7.1 has not been independently audited (its authors self-audited 0.6.1 in April 2026), and no external audit covers Qanary yet
+- **Self-bundled only**: every live user operation was self-bundled through `EntryPoint.handleOps`. No public ERC-4337 bundler run is recorded, and whether a bundler’s ERC-7562 tracer accepts the Stylus verifier call during validation is untested
+- **Only `QuantumValidator` checks verifiers**: it accepts post-quantum root and guardian verifiers only. `PQSafeOwner`, `QanaryAccount` and `QanaryMultisigAccount` accept any verifier address, including the identity precompile, which accepts every signature, so use the verifier addresses in `deployments/<network>.json`
+- **Third-party cryptography**: `@noble/post-quantum` 0.7.1 has not been independently audited (its authors self-audited 0.6.1 in April 2026)
+- **No external audit**: an internal pre-deployment audit found 1 High, 2 Medium and 3 Low issues; the deployed contracts fix or document each one. [SECURITY.md](SECURITY.md#known-limits) lists every known limit
 
 ## License
 
-Qanary is released under the [MIT License](LICENSE). `contracts/evm/src/fallback/vendor` keeps the MIT license of [fireblocks-labs/evm-ml-dsa-verifier](https://github.com/fireblocks-labs/evm-ml-dsa-verifier), and `scripts/run-dev-node.sh` carries the Apache-2.0 notice of OffchainLabs/nitro-devnode.
+Qanary is released under the [MIT License](LICENSE). `contracts/evm/src/fallback/vendor` keeps the MIT license of [fireblocks-labs/evm-ml-dsa-verifier](https://github.com/fireblocks-labs/evm-ml-dsa-verifier), `contracts/evm/test/vendor/safe130` keeps the LGPL-3.0 license of Safe 1.3.0 (test code only; nothing in `src/` imports it), and `scripts/run-dev-node.sh` carries the Apache-2.0 notice of OffchainLabs/nitro-devnode.
