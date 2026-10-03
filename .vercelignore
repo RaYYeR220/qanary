@@ -1,0 +1,17 @@
+# Upload only what the web app builds from: the app, the SDK, the deployment records
+# and the workspace files. Everything else (contracts, Rust crates, build output) stays local.
+/*
+!/apps
+!/packages
+!/deployments
+!/package.json
+!/pnpm-lock.yaml
+!/pnpm-workspace.yaml
+node_modules
+.next
+/packages/sdk/dist
+*.tsbuildinfo
+.env
+.env.*
+.secrets
+.vercel

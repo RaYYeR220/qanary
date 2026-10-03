@@ -38,3 +38,6 @@ submission-packet.md
 
 # Local Nitro dev node deployments (ephemeral)
 deployments/devnode.json
+
+# Vercel project link (local)
+.vercel/
