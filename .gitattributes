@@ -1,0 +1,22 @@
+# Line endings: LF in the repository and, unless listed below, LF in every checkout, including
+# Windows with core.autocrlf=true. Shell scripts fail on CR.
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.mjs text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.sol text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.woff2 binary
+
+# cargo-stylus hashes these files byte for byte into the deployed programs (the `project_hash`
+# section), and the deployed programs were built from a CRLF checkout. Checking them out with CRLF
+# on every platform lets `cargo stylus verify` reproduce the deployments (docs/DEPLOYING.md).
+contracts/stylus/*/Cargo.toml text eol=crlf
+contracts/stylus/*/build.rs text eol=crlf
+contracts/stylus/*/src/*.rs text eol=crlf
+rust-toolchain.toml text eol=crlf
