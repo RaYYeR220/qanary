@@ -1,4 +1,4 @@
-/* Narrow screens: a quiet top bar */
+/* Narrow screens: a quiet top bar; the pages sit behind a menu */
 .masthead {
   position: relative;
   z-index: 5;
@@ -32,20 +32,98 @@
   letter-spacing: 0.01em;
 }
 
-.nav ul {
-  display: flex;
-  gap: var(--s1);
+.nav {
+  display: none;
+}
+
+.list,
+.sheetList {
   list-style: none;
 }
 
-.nav a {
-  font-size: var(--step--1);
+.list a,
+.sheetList a {
   text-decoration: none;
   color: var(--ink);
 }
 
-.nav a:hover {
+.list a:hover,
+.sheetList a:hover {
   color: var(--ink-strong);
+}
+
+.list a[aria-current='page'],
+.sheetList a[aria-current='page'] {
+  color: var(--accent);
+}
+
+.menu {
+  position: relative;
+}
+
+.summary {
+  list-style: none;
+  cursor: pointer;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--step--1);
+  color: var(--ink);
+}
+
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+/* three engraved rules, crossing out when open */
+.summary::after {
+  content: '';
+  width: 1.1rem;
+  height: 0.7rem;
+  background:
+    linear-gradient(var(--accent), var(--accent)) top / 100% 1px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) center / 100% 1px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) bottom / 100% 1px no-repeat;
+}
+
+.sheet {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--s0));
+  min-width: 13rem;
+  padding: var(--s0) var(--s1);
+  background: var(--bistre-900);
+  box-shadow: 0 0 0 var(--hairline) var(--rule-strong);
+}
+
+.sheetList li + li {
+  border-top: var(--hairline) solid var(--rule);
+}
+
+.sheetList a {
+  display: block;
+  padding: 0.7rem 0;
+  font-size: var(--step-0);
+}
+
+@media (min-width: 40em) {
+  .menu {
+    display: none;
+  }
+
+  .nav {
+    display: block;
+  }
+
+  .list {
+    display: flex;
+    gap: var(--s1);
+  }
+
+  .list a {
+    font-size: var(--step--1);
+  }
 }
 
 /* Wide screens: the wordmark rail down the right edge, fixed */
@@ -79,16 +157,16 @@
     letter-spacing: 0.02em;
   }
 
-  .nav ul {
+  .list {
     flex-direction: column;
     gap: 0;
   }
 
-  .nav li {
+  .list li {
     border-top: var(--hairline) solid var(--rule);
   }
 
-  .nav a {
+  .list a {
     display: block;
     padding: var(--s1) var(--s-1);
     text-align: center;

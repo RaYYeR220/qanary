@@ -1,13 +1,9 @@
 import Link from 'next/link';
 import { Monogram } from './Monogram';
+import { NavLinks } from './NavLinks';
 import styles from './Masthead.module.css';
 
-const NAV = [
-  { href: '/#how', label: 'How it works' },
-  { href: '/#proof', label: 'Proof' },
-];
-
-/** The wordmark rail on wide screens; a top bar on narrow ones. */
+/** The wordmark rail on wide screens; a top bar with a menu on narrow ones. */
 export function Masthead() {
   return (
     <header className={styles.masthead}>
@@ -16,14 +12,14 @@ export function Masthead() {
         <span className={styles.word}>Qanary</span>
       </Link>
       <nav aria-label="Primary" className={styles.nav}>
-        <ul>
-          {NAV.map((n) => (
-            <li key={n.href}>
-              <Link href={n.href}>{n.label}</Link>
-            </li>
-          ))}
-        </ul>
+        <NavLinks className={styles.list} />
       </nav>
+      <details className={styles.menu}>
+        <summary className={styles.summary}>Menu</summary>
+        <nav aria-label="Primary" className={styles.sheet}>
+          <NavLinks className={styles.sheetList} />
+        </nav>
+      </details>
     </header>
   );
 }

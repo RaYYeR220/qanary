@@ -34,16 +34,23 @@ export const STYLUS_LABELS = {
 export type StylusKey = keyof typeof STYLUS_LABELS;
 export const STYLUS_KEYS = Object.keys(STYLUS_LABELS) as StylusKey[];
 
-/** Solidity contracts, by their key under `evm`, once those records exist. */
+/** Solidity contracts, by their key under `evm` (the SDK's core contract names). */
 export const EVM_LABELS: Record<string, string> = {
   keyStore: 'Key store',
   quantumValidator: 'Quantum validator',
   hotTierExecutor: 'Hot-tier executor',
-  quantumCanaryRegistry: 'Tripwire registry',
+  canaryRegistry: 'Tripwire registry',
+  drillRegistryFactory: 'Drill registry factory',
   qanaryAccountFactory: 'Account factory',
   pqSafeOwnerFactory: 'Safe owner factory',
-  mldsa44SolidityVerifier: 'ML-DSA-44 verifier (Solidity)',
+  solidityMldsa44Verifier: 'ML-DSA-44 verifier (Solidity)',
 };
+
+/** Where the Solidity ML-DSA-44 verifier may be recorded, in order of preference. */
+export const FALLBACK_VERIFIER_PATHS = [
+  ['evm', 'solidityMldsa44Verifier'],
+  ['fallback', 'solidityMldsa44Verifier'],
+] as const;
 
 export type Hex = `0x${string}`;
 
@@ -73,6 +80,10 @@ export interface NetworkRecord {
   stylus: Partial<Record<StylusKey, Contract>>;
   evm: Contract[];
   e2e: Tx[];
+  /** The Solidity ML-DSA-44 verifier, where Stylus activations are paused. */
+  fallbackVerifier?: Hex;
+  /** The validated record, as read; handed to the SDK's `parseDeployment` in the browser. */
+  json?: Record<string, unknown>;
 }
 
 export class DeploymentError extends Error {
@@ -154,15 +165,29 @@ export function parseRecord(network: Network, json: unknown, file = `${network.k
   if (doc.evm !== undefined) {
     if (!isObject(doc.evm)) fail('"evm" must be an object');
     for (const [k, v] of Object.entries(doc.evm as Record<string, unknown>)) {
-      evm.push(contract(k, EVM_LABELS[k] ?? k, v, `evm.${k}`));
+      // the SDK records core contracts as bare addresses; other tools as { address, ...Tx }
+      evm.push(contract(k, EVM_LABELS[k] ?? k, isObject(v) ? v : { address: v }, `evm.${k}`));
     }
   }
-  let e2e: Tx[] = [];
+  // end-to-end runs nest their records (`e2e.sdk.pqUserOpTx`); only *Tx fields are transactions
+  const e2e: Tx[] = [];
+  const walk = (o: Record<string, unknown>, at: string) => {
+    e2e.push(...txs(o, at));
+    for (const [k, v] of Object.entries(o)) if (isObject(v)) walk(v, `${at}.${k}`);
+  };
   if (doc.e2e !== undefined) {
     if (!isObject(doc.e2e)) fail('"e2e" must be an object');
-    e2e = txs(doc.e2e as Record<string, unknown>, 'e2e');
+    walk(doc.e2e as Record<string, unknown>, 'e2e');
   }
-  return { network, present: true, stylus, evm, e2e };
+  let fallbackVerifier: Hex | undefined;
+  for (const [section, key] of FALLBACK_VERIFIER_PATHS) {
+    const sec = doc[section];
+    if (!isObject(sec) || sec[key] === undefined) continue;
+    const v = sec[key];
+    fallbackVerifier = address(isObject(v) ? v.address : v, `${section}.${key}`);
+    break;
+  }
+  return { network, present: true, stylus, evm, e2e, ...(fallbackVerifier ? { fallbackVerifier } : {}), json: doc };
 }
 
 export const emptyRecord = (network: Network): NetworkRecord => ({ network, present: false, stylus: {}, evm: [], e2e: [] });
@@ -192,3 +217,48 @@ export function readDeployments(dir = path.join(repoRoot(), 'deployments')): Net
 }
 
 export const shortHex = (h: string) => `${h.slice(0, 6)}…${h.slice(-4)}`;
+
+/** What a product page needs to know about a network, serialisable for the browser. */
+export interface ProductNetwork {
+  key: NetworkKey;
+  name: string;
+  chainId: number;
+  explorer: string;
+  rpc: string;
+  nativeSymbol: string;
+  stylus: Network['stylus'];
+  /** Validated deployment record, or null while nothing is deployed there. */
+  json: Record<string, unknown> | null;
+  fallbackVerifier: Hex | null;
+}
+
+const RPC: Record<NetworkKey, { rpc: string; nativeSymbol: string }> = {
+  apechain: { rpc: 'https://rpc.apechain.com/http', nativeSymbol: 'APE' },
+  'apechain-curtis': { rpc: 'https://rpc.curtis.apechain.com', nativeSymbol: 'APE' },
+  'arbitrum-one': { rpc: 'https://arb1.arbitrum.io/rpc', nativeSymbol: 'ETH' },
+};
+
+/** The product's networks, read from the records at build time. */
+export function productNetworks(records: NetworkRecord[] = readDeployments()): ProductNetwork[] {
+  // the SDK reads `evm` entries as bare addresses; hand it those whatever the record's style
+  const normalise = (json: Record<string, unknown> | undefined) => {
+    if (!json) return null;
+    const evm = json.evm;
+    if (!isObject(evm)) return json;
+    return {
+      ...json,
+      evm: Object.fromEntries(Object.entries(evm).map(([k, v]) => [k, isObject(v) ? v.address : v])),
+    };
+  };
+  return records.map((r) => ({
+    key: r.network.key,
+    name: r.network.name,
+    chainId: r.network.chainId,
+    explorer: r.network.explorer,
+    rpc: RPC[r.network.key].rpc,
+    nativeSymbol: RPC[r.network.key].nativeSymbol,
+    stylus: r.network.stylus,
+    json: normalise(r.json),
+    fallbackVerifier: r.fallbackVerifier ?? null,
+  }));
+}

@@ -8,12 +8,22 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "predev": "node scripts/ensure-sdk.mjs",
+    "prebuild": "node scripts/ensure-sdk.mjs",
+    "pretypecheck": "node scripts/ensure-sdk.mjs",
+    "pretest": "node scripts/ensure-sdk.mjs"
   },
   "dependencies": {
     "next": "16.3.8",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "@qanary/sdk": "workspace:*",
+    "@tanstack/react-query": "5.104.1",
+    "viem": "2.57.2",
+    "wagmi": "3.7.7",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0"
   },
   "devDependencies": {
     "@fontsource/redaction": "5.3.0",
