@@ -38,6 +38,18 @@ export const quantumValidatorAbi = [
   },
   {
     "type": "function",
+    "name": "ROTATION_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "accountDigest",
     "inputs": [
       {
@@ -297,6 +309,10 @@ export const quantumValidatorAbi = [
       {
         "name": "guardianSigs",
         "type": "bytes[]"
+      },
+      {
+        "name": "newKeyProof",
+        "type": "bytes"
       }
     ],
     "outputs": [],
@@ -329,6 +345,23 @@ export const quantumValidatorAbi = [
   },
   {
     "type": "function",
+    "name": "recoveryNonce",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "rotateKey",
     "inputs": [
       {
@@ -338,10 +371,39 @@ export const quantumValidatorAbi = [
       {
         "name": "keyPtr",
         "type": "address"
+      },
+      {
+        "name": "proof",
+        "type": "bytes"
       }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "rotationDigest",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address"
+      },
+      {
+        "name": "verifier",
+        "type": "address"
+      },
+      {
+        "name": "keyPtr",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -548,6 +610,11 @@ export const quantumValidatorAbi = [
   {
     "type": "error",
     "name": "InvalidKeyConfig",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidKeyProof",
     "inputs": []
   },
   {

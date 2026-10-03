@@ -112,6 +112,19 @@ describe('deployments', () => {
     expect(KERNEL_V3_3_ADDRESSES.factory).toBe('0x2577507b78c2008Ff367261CB6285d44ba5eF2E9');
   });
 
+  it('reads contract entries recorded as objects and the Solidity ML-DSA-44 fallback', () => {
+    const d = parseDeployment(42161, {
+      evm: { keyStore: { address: A(5), deployTx: `0x${'ab'.repeat(32)}` }, mldsa44SolidityVerifier: { address: A(6) } },
+    });
+    expect(d.keyStore).toBe('0x0505050505050505050505050505050505050505');
+    expect(requireVerifier(d, 'mldsa44')).toBe('0x0606060606060606060606060606060606060606');
+    const both = parseDeployment(33139, {
+      stylus: { mldsa44Verifier: { address: A(1) } },
+      evm: { mldsa44SolidityVerifier: { address: A(6) } },
+    });
+    expect(both.verifiers.mldsa44).toBe('0x0101010101010101010101010101010101010101');
+  });
+
   it('accepts chains without a network entry', () => {
     const d = parseDeployment(8453, { evm: { keyStore: A(5) } });
     expect(d).toMatchObject({ network: 'chain-8453', nativeSymbol: 'ETH', tokens: {} });
@@ -131,6 +144,9 @@ describe('deployments', () => {
   it('rejects malformed files', () => {
     expect(() => parseDeployment(33111, { chainId: 33139 })).toThrow(/chainId 33139, expected 33111/);
     expect(() => parseDeployment(33111, { evm: { keyStore: '0x1234' } })).toThrow(/evm\.keyStore is not an address/);
+    expect(() => parseDeployment(33111, { evm: { keyStore: { address: '0x1234' } } })).toThrow(
+      /evm\.keyStore\.address is not an address/,
+    );
     expect(() => parseDeployment(33111, { kernel: { factory: 'nope' } })).toThrow(/kernel\.factory is not an address/);
     expect(() => parseDeployment(33111, [])).toThrow(/JSON object/);
     expect(() => parseDeployment(0, null)).toThrow(/invalid chain id/);

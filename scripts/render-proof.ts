@@ -54,6 +54,7 @@ const FALLBACK: Expected[] = [
   {
     label: 'ML-DSA-44 verifier (Solidity)',
     paths: [
+      'evm.mldsa44SolidityVerifier',
       'fallback.solidityMldsa44Verifier',
       'fallback.verifier',
       'evm.solidityMldsa44Verifier',
@@ -74,16 +75,47 @@ const CORE: Expected[] = [
   { label: 'QanaryAccountFactory', paths: ['evm.qanaryAccountFactory'] },
 ];
 
-const HERO: Expected[] = [
-  { label: 'Treasury account (Kernel v3.3, ML-DSA-44 root)', paths: ['e2e.sdk.kernelAccount'], key: true },
-  { label: 'Account deployed by its first post-quantum signed user operation', paths: ['e2e.sdk.pqUserOpTx'], key: true },
-  { label: 'Hot-key transfer inside the cap', paths: ['e2e.sdk.hotTransferTx'], key: true },
-  { label: 'Hot-key transfer over the cap, reverted (`CapExceeded`)', paths: ['e2e.sdk.hotOverCapRevertTx'], key: true },
-  { label: 'Drill tripwire claim marks secp256k1 broken', paths: ['e2e.sdk.drillClaimTx'], key: true },
-  { label: 'Hot-key transfer after the trip, reverted (`ClassicalFamilyBroken`)', paths: ['e2e.sdk.postTripHotRevertTx'], key: true },
-  { label: 'Treasury account with an AWS KMS ML-DSA-44 root', paths: ['e2e.sdk.kmsKernelAccount'] },
-  { label: 'User operation signed by the AWS KMS key', paths: ['e2e.sdk.kmsUserOpTx'] },
-  { label: 'Drill registry created', paths: ['e2e.sdk.drillRegistryTx'] },
+const sdk = (key: string) => [`e2e.sdk.${key}`];
+
+const HERO_START: Expected[] = [
+  { label: 'Treasury account (Kernel v3.3) whose root key is an AWS KMS ML-DSA-44 key', paths: sdk('kernelAccount'), key: true },
+  { label: 'Root key stored in the KeyStore', paths: sdk('storeKeyTx') },
+];
+
+const HERO_ACCOUNT: Expected[] = [
+  { label: 'Account deployed by its first post-quantum signed user operation', paths: sdk('pqUserOpTx'), key: true },
+  { label: 'Native transfer signed by the post-quantum root key', paths: sdk('pqTransferTx'), key: true },
+  { label: 'Hot tier installed by a root user operation', paths: sdk('installHotTierTx'), key: true },
+  { label: 'Hot-key transfer inside the cap', paths: sdk('hotTransferTx'), key: true },
+  { label: 'Hot-key transfer over the cap, reverted (`CapExceeded`)', paths: sdk('hotOverCapRevertTx'), key: true },
+  { label: 'Tampered post-quantum signature, reverted (`AA24 signature error`)', paths: sdk('tamperedSigRevertTx'), key: true },
+  { label: 'Drill registry created', paths: sdk('drillRegistryTx') },
+  { label: 'Hot tier re-pointed at the drill registry by a root user operation', paths: sdk('repointHotTierTx') },
+];
+
+const HERO_TRIP: Expected[] = [
+  { label: 'Drill tripwire claim marks secp256k1 broken', paths: sdk('drillClaimTx'), key: true },
+  { label: 'Hot-key transfer after the trip, reverted (`ClassicalFamilyBroken`)', paths: sdk('postTripHotRevertTx'), key: true },
+  { label: 'ERC-1271 `isValidSignature` through Kernel (eth_call)', paths: sdk('erc1271Result') },
+];
+
+const APECHAIN_HERO: Expected[] = [
+  ...HERO_START,
+  ...HERO_ACCOUNT,
+  { label: 'Ladder rung L1 (secp160r1) claimed through the Stylus ladder verifier', paths: sdk('ladderL1ClaimTx'), key: true },
+  ...HERO_TRIP,
+  { label: 'Account with an ML-DSA-44 root from a mnemonic', paths: sdk('mnemonicKernelAccount') },
+  { label: 'Its first user operation (deploys it and transfers)', paths: sdk('mnemonicUserOpTx') },
+  { label: 'Account with a Falcon-512 root', paths: sdk('falconKernelAccount') },
+  { label: 'Its first user operation (deploys it and transfers)', paths: sdk('falconUserOpTx') },
+];
+
+const ARBITRUM_ONE_HERO: Expected[] = [
+  ...HERO_START,
+  { label: 'Root key expanded on-chain for the Solidity verifier (once per key)', paths: sdk('prepareKeyTx') },
+  ...HERO_ACCOUNT,
+  { label: 'Ladder rung L1 claim fails closed (`LadderUnavailable`)', paths: sdk('ladderL1RevertTx'), key: true },
+  ...HERO_TRIP,
 ];
 
 const NETWORKS: Network[] = [
@@ -94,7 +126,7 @@ const NETWORKS: Network[] = [
     explorer: 'https://apescan.io',
     role: 'An Arbitrum Orbit L3 that settles to Arbitrum One; it runs the Stylus verifiers and the full module stack.',
     contracts: [...STYLUS, ...CORE],
-    hero: HERO,
+    hero: APECHAIN_HERO,
   },
   {
     name: 'arbitrum-one',
@@ -103,7 +135,7 @@ const NETWORKS: Network[] = [
     explorer: 'https://arbiscan.io',
     role: 'It runs the full module stack on the Solidity ML-DSA-44 verifier while Stylus activations are paused.',
     contracts: [...FALLBACK, ...CORE],
-    hero: HERO,
+    hero: ARBITRUM_ONE_HERO,
   },
   {
     name: 'apechain-curtis',
@@ -229,10 +261,11 @@ function humanize(path: string): string {
   return `\`${last}\``;
 }
 
-function cell(n: Network, v: unknown): string {
+/** A recorded value: addresses and transactions link to the explorer; `key` tells a tx from another hash. */
+function cell(n: Network, v: unknown, key = 'Tx'): string {
   if (typeof v !== 'string') return v === undefined ? PENDING : `\`${JSON.stringify(v)}\``;
   if (ADDRESS.test(v)) return addressLink(n, v);
-  if (HASH.test(v)) return txLink(n, v);
+  if (HASH.test(v) && key.endsWith('Tx')) return txLink(n, v);
   return `\`${v}\``;
 }
 
@@ -243,9 +276,9 @@ function contractRows(n: Network, json: Json | undefined): { rows: string[]; fou
   const used = new Set<string>();
   const rows: string[] = [];
   let found = 0;
-  const row = (label: string, e: Entry | undefined) => {
+  const row = (label: string, e: Entry | undefined, expected = true) => {
     if (!e) return rows.push(`| ${label} | ${PENDING} | | |`);
-    found++;
+    if (expected) found++;
     used.add(e.path);
     const txs = [e.deployTx && `deploy ${txLink(n, e.deployTx)}`, e.activationTx && `activate ${txLink(n, e.activationTx)}`]
       .filter(Boolean)
@@ -256,7 +289,7 @@ function contractRows(n: Network, json: Json | undefined): { rows: string[]; fou
     const path = x.paths.find((p) => all.has(p));
     row(x.label, path ? all.get(path) : undefined);
   }
-  for (const [path, e] of all) if (!used.has(path)) row(humanize(path), e);
+  for (const [path, e] of all) if (!used.has(path)) row(humanize(path), e, false);
   return { rows, found };
 }
 
@@ -274,8 +307,8 @@ function heroRows(n: Network, json: Json | undefined): string[] {
       if (!isRecord(values)) continue;
       for (const [key, v] of Object.entries(values)) {
         const path = `e2e.${section}.${key}`;
-        if (used.has(path) || key === 'ranAt' || key === 'hotKey' || key.endsWith('UserOpHash')) continue;
-        rows.push(`| ${humanize(path)} | ${cell(n, v)} |`);
+        if (used.has(path) || key === 'ranAt' || key.endsWith('UserOpHash') || /KernelIndex$|^kernelIndex$/.test(key)) continue;
+        rows.push(`| ${humanize(path)} | ${cell(n, v, key)} |`);
       }
     }
   }

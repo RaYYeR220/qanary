@@ -73,13 +73,13 @@ export function recordE2E(n: Network, section: string, values: Record<string, un
 }
 
 /**
- * A secret for a script run: from the environment, else from `.secrets/<file>` (KEY=value lines),
- * else created with `create` and appended to that file. Secrets are never printed.
+ * A secret for a script run: from the environment, else from `<QANARY_SECRETS_DIR or .secrets>/<file>`
+ * (KEY=value lines), else created with `create` and appended to that file. Secrets are never printed.
  */
 export function secret(file: string, name: string, create: () => string): string {
   const fromEnv = process.env[name];
   if (fromEnv) return fromEnv;
-  const path = resolve(REPO_ROOT, '.secrets', file);
+  const path = resolve(process.env.QANARY_SECRETS_DIR || resolve(REPO_ROOT, '.secrets'), file);
   if (existsSync(path)) {
     for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
       const eq = line.indexOf('=');
@@ -89,7 +89,7 @@ export function secret(file: string, name: string, create: () => string): string
   const value = create();
   mkdirSync(dirname(path), { recursive: true });
   appendFileSync(path, `${name}=${value}\n`, { mode: 0o600 });
-  console.log(`created ${name} in ${relative(REPO_ROOT, path)} (git-ignored)`);
+  console.log(`created ${name} in ${relative(REPO_ROOT, path)}`);
   return value;
 }
 

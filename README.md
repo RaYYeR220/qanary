@@ -94,8 +94,8 @@ The Stylus verifiers run on ApeChain, an Arbitrum Orbit L3 that settles to Arbit
 <!-- proof:begin readme-deployments -->
 | Network | Signature verifier | ML-DSA-44 verifier | QuantumValidator |
 |---|---|---|---|
-| ApeChain | Stylus | [`0x38Fc3687363F1A69cc7B07b79F54DeBF885f23e1`](https://apescan.io/address/0x38Fc3687363F1A69cc7B07b79F54DeBF885f23e1) | pending |
-| Arbitrum One | Solidity (fallback) | pending | pending |
+| ApeChain | Stylus | [`0x38Fc3687363F1A69cc7B07b79F54DeBF885f23e1`](https://apescan.io/address/0x38Fc3687363F1A69cc7B07b79F54DeBF885f23e1) | [`0x0057Fcac28c7094910D563Ad31E437d78a92036a`](https://apescan.io/address/0x0057Fcac28c7094910D563Ad31E437d78a92036a) |
+| Arbitrum One | Solidity (fallback) | [`0xc9C7B3B71f4A3451adeb29604bd8eA789F3F2EfE`](https://arbiscan.io/address/0xc9C7B3B71f4A3451adeb29604bd8eA789F3F2EfE) | [`0x0057Fcac28c7094910D563Ad31E437d78a92036a`](https://arbiscan.io/address/0x0057Fcac28c7094910D563Ad31E437d78a92036a) |
 | ApeChain Curtis (testnet) | Stylus | [`0x38Fc3687363F1A69cc7B07b79F54DeBF885f23e1`](https://curtis.apescan.io/address/0x38Fc3687363F1A69cc7B07b79F54DeBF885f23e1) | not deployed |
 <!-- proof:end readme-deployments -->
 

@@ -16,15 +16,15 @@ The Stylus verifiers run on ApeChain, an Arbitrum Orbit L3 that settles to Arbit
 | ApeChain | ML-DSA-44 verifier (Stylus) | [`0x38Fc3687363F1A69cc7B07b79F54DeBF885f23e1`](https://apescan.io/address/0x38Fc3687363F1A69cc7B07b79F54DeBF885f23e1) |
 | ApeChain | ML-DSA-65 verifier (Stylus) | [`0x187551ed28f6a105953aABb163AF6cd53f75C197`](https://apescan.io/address/0x187551ed28f6a105953aABb163AF6cd53f75C197) |
 | ApeChain | Falcon-512 verifier (Stylus) | [`0x051736a3cD6AC6eA5Bc062E0B964eA6279f7cbA3`](https://apescan.io/address/0x051736a3cD6AC6eA5Bc062E0B964eA6279f7cbA3) |
-| ApeChain | KeyStore | pending |
-| ApeChain | QuantumValidator | pending |
-| ApeChain | HotTierExecutor | pending |
-| ApeChain | QuantumCanaryRegistry | pending |
-| Arbitrum One | ML-DSA-44 verifier (Solidity) | pending |
-| Arbitrum One | KeyStore | pending |
-| Arbitrum One | QuantumValidator | pending |
-| Arbitrum One | HotTierExecutor | pending |
-| Arbitrum One | QuantumCanaryRegistry | pending |
+| ApeChain | KeyStore | [`0x12cF4EE4073d5F3E5DE8bFE6e34522cEb46854f6`](https://apescan.io/address/0x12cF4EE4073d5F3E5DE8bFE6e34522cEb46854f6) |
+| ApeChain | QuantumValidator | [`0x0057Fcac28c7094910D563Ad31E437d78a92036a`](https://apescan.io/address/0x0057Fcac28c7094910D563Ad31E437d78a92036a) |
+| ApeChain | HotTierExecutor | [`0xE5A6EFCEAcdBFe96593f01F7770C1163B0C631f3`](https://apescan.io/address/0xE5A6EFCEAcdBFe96593f01F7770C1163B0C631f3) |
+| ApeChain | QuantumCanaryRegistry | [`0x4848512a663F59fA23708C1Fa2f1cEA21B888A95`](https://apescan.io/address/0x4848512a663F59fA23708C1Fa2f1cEA21B888A95) |
+| Arbitrum One | ML-DSA-44 verifier (Solidity) | [`0xc9C7B3B71f4A3451adeb29604bd8eA789F3F2EfE`](https://arbiscan.io/address/0xc9C7B3B71f4A3451adeb29604bd8eA789F3F2EfE) |
+| Arbitrum One | KeyStore | [`0x12cF4EE4073d5F3E5DE8bFE6e34522cEb46854f6`](https://arbiscan.io/address/0x12cF4EE4073d5F3E5DE8bFE6e34522cEb46854f6) |
+| Arbitrum One | QuantumValidator | [`0x0057Fcac28c7094910D563Ad31E437d78a92036a`](https://arbiscan.io/address/0x0057Fcac28c7094910D563Ad31E437d78a92036a) |
+| Arbitrum One | HotTierExecutor | [`0xE5A6EFCEAcdBFe96593f01F7770C1163B0C631f3`](https://arbiscan.io/address/0xE5A6EFCEAcdBFe96593f01F7770C1163B0C631f3) |
+| Arbitrum One | QuantumCanaryRegistry | [`0x4848512a663F59fA23708C1Fa2f1cEA21B888A95`](https://arbiscan.io/address/0x4848512a663F59fA23708C1Fa2f1cEA21B888A95) |
 | ApeChain Curtis (testnet) | ML-DSA-44 verifier (Stylus) | [`0x38Fc3687363F1A69cc7B07b79F54DeBF885f23e1`](https://curtis.apescan.io/address/0x38Fc3687363F1A69cc7B07b79F54DeBF885f23e1) |
 <!-- proof:end judges-addresses -->
 
@@ -52,18 +52,26 @@ The end-to-end run deploys a treasury account with an ML-DSA-44 root, moves fund
 <!-- proof:begin judges-hero -->
 | Network | Step | Transaction or address |
 |---|---|---|
-| ApeChain | Treasury account (Kernel v3.3, ML-DSA-44 root) | pending |
-| ApeChain | Account deployed by its first post-quantum signed user operation | pending |
-| ApeChain | Hot-key transfer inside the cap | pending |
-| ApeChain | Hot-key transfer over the cap, reverted (`CapExceeded`) | pending |
-| ApeChain | Drill tripwire claim marks secp256k1 broken | pending |
-| ApeChain | Hot-key transfer after the trip, reverted (`ClassicalFamilyBroken`) | pending |
-| Arbitrum One | Treasury account (Kernel v3.3, ML-DSA-44 root) | pending |
-| Arbitrum One | Account deployed by its first post-quantum signed user operation | pending |
-| Arbitrum One | Hot-key transfer inside the cap | pending |
-| Arbitrum One | Hot-key transfer over the cap, reverted (`CapExceeded`) | pending |
-| Arbitrum One | Drill tripwire claim marks secp256k1 broken | pending |
-| Arbitrum One | Hot-key transfer after the trip, reverted (`ClassicalFamilyBroken`) | pending |
+| ApeChain | Treasury account (Kernel v3.3) whose root key is an AWS KMS ML-DSA-44 key | [`0x32D09d174725388116C3fB997262AA0D3944A958`](https://apescan.io/address/0x32D09d174725388116C3fB997262AA0D3944A958) |
+| ApeChain | Account deployed by its first post-quantum signed user operation | [`0x8191…5801`](https://apescan.io/tx/0x819119f9af3b4f684fd46be95f7b32b4f435285a53f0cf29d79d0c6910015801) |
+| ApeChain | Native transfer signed by the post-quantum root key | [`0xc60a…4f2e`](https://apescan.io/tx/0xc60a9ac330f5417e156d5c75e2754aad7bc573bedc0e5c42a41b27542a614f2e) |
+| ApeChain | Hot tier installed by a root user operation | [`0xb732…0a9c`](https://apescan.io/tx/0xb732c41ac6fcf17e22cf39ea5d371dd9a20b7debe236b998666ad78a16740a9c) |
+| ApeChain | Hot-key transfer inside the cap | [`0x16b8…68f3`](https://apescan.io/tx/0x16b86ab6745cbfd03e0dfc6fdfc26f54e0434a9741fb5af5bfcbc17ee8b368f3) |
+| ApeChain | Hot-key transfer over the cap, reverted (`CapExceeded`) | [`0x95f5…5db4`](https://apescan.io/tx/0x95f55ce2439bba0f8c20696874a71893c855bc46dd4da6f1958c208930545db4) |
+| ApeChain | Tampered post-quantum signature, reverted (`AA24 signature error`) | [`0x28bf…51db`](https://apescan.io/tx/0x28bfb6b686a638660a23fea20e7267dcc03c4ee36e0a7fac022cdd4d546351db) |
+| ApeChain | Ladder rung L1 (secp160r1) claimed through the Stylus ladder verifier | [`0x5eb5…8b83`](https://apescan.io/tx/0x5eb595c6f188135e43c0d914c96a7e9d2708d8d4ce0ae33b92afa9bd210a8b83) |
+| ApeChain | Drill tripwire claim marks secp256k1 broken | [`0x417d…13bd`](https://apescan.io/tx/0x417d49ae8e07749155f85003995adf34282d47c62aede8cdb91d99cb923813bd) |
+| ApeChain | Hot-key transfer after the trip, reverted (`ClassicalFamilyBroken`) | [`0x4540…d3ad`](https://apescan.io/tx/0x45404f06fc5c1a284f332d517760dcec0bd09fdc0f72ca7a319a4d68fe8ad3ad) |
+| Arbitrum One | Treasury account (Kernel v3.3) whose root key is an AWS KMS ML-DSA-44 key | [`0xA3d2E874C2643B53b166DCB94073A7AD621BEbEe`](https://arbiscan.io/address/0xA3d2E874C2643B53b166DCB94073A7AD621BEbEe) |
+| Arbitrum One | Account deployed by its first post-quantum signed user operation | [`0x0b98…6d0c`](https://arbiscan.io/tx/0x0b989fed5457af04e827e254f9afae443d411efeb80baa575c89360fb95d6d0c) |
+| Arbitrum One | Native transfer signed by the post-quantum root key | [`0xa1f7…d821`](https://arbiscan.io/tx/0xa1f717c83ee25aad554aac6b33fc4e5a868c8e8386d594ec464c9ab6182cd821) |
+| Arbitrum One | Hot tier installed by a root user operation | [`0xb6c8…fc60`](https://arbiscan.io/tx/0xb6c838feb81a0d98f8d746909b4835491b4bc65b9464f88debc53d1ab3defc60) |
+| Arbitrum One | Hot-key transfer inside the cap | [`0x8e90…0a82`](https://arbiscan.io/tx/0x8e9069521f3cdf405b59ad37aaab0d442ce0c61c8ba5575e6b0c141697910a82) |
+| Arbitrum One | Hot-key transfer over the cap, reverted (`CapExceeded`) | [`0xe2b4…d1dd`](https://arbiscan.io/tx/0xe2b477f0c523117b83aababbd3cc2d1688105bc1cc5a138428774bee975fd1dd) |
+| Arbitrum One | Tampered post-quantum signature, reverted (`AA24 signature error`) | [`0x601c…a41b`](https://arbiscan.io/tx/0x601c02aaa9be012cd633c44ac7da30a151febe337f7b22461946b19f9e0ba41b) |
+| Arbitrum One | Ladder rung L1 claim fails closed (`LadderUnavailable`) | [`0x7d45…f7c4`](https://arbiscan.io/tx/0x7d453419b345b764ab3d58b8a02f50a9ec2bf4c75493a6bcc6aff6e89e4bf7c4) |
+| Arbitrum One | Drill tripwire claim marks secp256k1 broken | [`0x08f2…5ceb`](https://arbiscan.io/tx/0x08f2ff7868afa9b8dd6c04ed91640867b18214e8696a3dd0d2c62b322bd75ceb) |
+| Arbitrum One | Hot-key transfer after the trip, reverted (`ClassicalFamilyBroken`) | [`0xab82…0bd6`](https://arbiscan.io/tx/0xab822abc17b0c02edc4b1396a1b3e2c726fbecede7670d8c6068d48bb8bf0bd6) |
 <!-- proof:end judges-hero -->
 
 ## Run the tests (optional)

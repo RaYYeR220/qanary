@@ -40,6 +40,11 @@ describe('deployment records', () => {
     expect(r.stylus.falcon512Verifier).toBeUndefined();
   });
 
+  it('reads *Tx fields of e2e sections written by a script', () => {
+    const r = parseRecord(ape, { ...base, e2e: { pqUserOpTx: tx(6), sdk: { hotTransferTx: tx(7), kernelAccount: addr(8), ranAt: 'x' } } });
+    expect(r.e2e.map((t) => t.label)).toEqual(['pq user op', 'hot transfer']);
+  });
+
   it('takes only *Tx fields of e2e as transactions', () => {
     const r = parseRecord(ape, { ...base, e2e: { createTreasuryTx: tx(5), note: 'x', blockNumber: 12 } });
     expect(r.e2e.map((t) => t.label)).toEqual(['create treasury']);

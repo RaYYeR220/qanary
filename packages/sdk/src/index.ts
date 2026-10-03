@@ -39,18 +39,26 @@ export {
 } from './deployments.js';
 export {
   KERNEL_VALIDATOR_SIG_PREFIX,
+  MIN_RECOVERY_DELAY_SECONDS,
   QUANTUM_VALIDATOR_DOMAIN,
   accountDigest,
   encodeValidatorInstallData,
   kernelErc1271Signature,
   kernelWrappedHash,
+  proposeRecoveryCall,
+  readRecoveryNonce,
+  recoveryDigest,
+  rotateKeyCall,
+  rotationDigest,
   setGuardiansCall,
   stubSignature,
   toQuantumValidator,
+  type KeyChangeDigestParams,
   type QuantumKernelValidator,
   type QuantumValidatorOptions,
   type ValidatorInstallData,
 } from './validator.js';
+export { PQ_SAFE_OWNER_DOMAIN, pqSafeOwnerDigest, safe130Erc1271Hash } from './safe.js';
 export {
   QANARY_ENTRY_POINT,
   QANARY_KERNEL_VERSION,

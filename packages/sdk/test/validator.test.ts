@@ -15,6 +15,7 @@ import {
 import { entryPoint07Address, getUserOperationHash, type UserOperation } from 'viem/account-abstraction';
 import { arbitrumSepolia, mainnet } from 'viem/chains';
 import {
+  MIN_RECOVERY_DELAY_SECONDS,
   SCHEMES,
   SIGNATURE_BYTES,
   accountDigest,
@@ -24,7 +25,12 @@ import {
   keyBlob,
   pqSignerFromSeed,
   predictKeyPointer,
+  proposeRecoveryCall,
   quantumValidatorAbi,
+  readRecoveryNonce,
+  recoveryDigest,
+  rotateKeyCall,
+  rotationDigest,
   setGuardiansCall,
   stubSignature,
   toQuantumValidator,
@@ -94,6 +100,77 @@ describe('encodings (forge vectors)', () => {
     const decoded = decodeFunctionData({ abi: quantumValidatorAbi, data: call.data });
     expect(decoded.functionName).toBe('setGuardians');
     expect(decoded.args).toEqual([['0xaabbccddeeff00112233445566778899aabbccddee'], 1, 86_400]);
+  });
+
+  it('rejects a recovery delay below 24 hours (except with recovery disabled)', () => {
+    expect(MIN_RECOVERY_DELAY_SECONDS).toBe(86_400);
+    expect(() => setGuardiansCall(VEC.validator, ['0xaabbccddeeff00112233445566778899aabbccddee'], 1, 3_600)).toThrow(
+      /at least 86400/,
+    );
+    expect(setGuardiansCall(VEC.validator, [], 0, 0).to).toBe(VEC.validator);
+  });
+});
+
+// Computed with forge against contracts/evm/src/QuantumValidator.sol: validator at 0x1111…1111 on
+// chain 421614, account 0x2222…2222, new verifier 0x3333…3333, new keyPtr 0x4444…4444, at recovery
+// nonce 0 and (after one rotateKey) nonce 1.
+const KEY_CHANGE = {
+  validator: VEC.validator,
+  chainId: VEC.chainId,
+  account: VEC.account,
+  verifier: VERIFIER,
+  keyPtr: '0x4444444444444444444444444444444444444444' as Address,
+};
+const ROTATION_N0: Hex = '0xfeb4b68dec794f500b0982beb5f71aba8e382c9676247a78c10297c57979938c';
+const RECOVERY_N0: Hex = '0xca5920e26aa4762f7b507e024f32de6a54d0e22a8a60212a10d3c81826bfddd3';
+const ROTATION_N1: Hex = '0xbdb5953c539d0c90e7c6b6ced9affc32ebf4dcb908e68586d6189a8c177c3cd1';
+const RECOVERY_N1: Hex = '0x9131d0ff9f782f8befd20a33d145a7570cdab02080f8a0332522abdefb770c5a';
+
+describe('key rotation and recovery (forge vectors)', () => {
+  it('computes rotationDigest and recoveryDigest at the account nonce', () => {
+    expect(rotationDigest({ ...KEY_CHANGE, nonce: 0n })).toBe(ROTATION_N0);
+    expect(recoveryDigest({ ...KEY_CHANGE, nonce: 0n })).toBe(RECOVERY_N0);
+    expect(rotationDigest({ ...KEY_CHANGE, nonce: 1n })).toBe(ROTATION_N1);
+    expect(recoveryDigest({ ...KEY_CHANGE, nonce: 1n })).toBe(RECOVERY_N1);
+  });
+
+  it('encodes rotateKey with the new key proof of possession', async () => {
+    const next = pqSignerFromSeed('mldsa44', new Uint8Array(32).fill(9));
+    const proof = await next.sign(rotationDigest({ ...KEY_CHANGE, nonce: 0n }));
+    expect(ml_dsa44.verify(hexToBytes(proof), hexToBytes(ROTATION_N0), next.publicKey)).toBe(true);
+    const call = rotateKeyCall(VEC.validator, KEY_CHANGE.verifier, KEY_CHANGE.keyPtr, proof);
+    expect(call.to).toBe(VEC.validator);
+    expect(call.value).toBe(0n);
+    const decoded = decodeFunctionData({ abi: quantumValidatorAbi, data: call.data });
+    expect(decoded.functionName).toBe('rotateKey');
+    expect(decoded.args).toEqual([KEY_CHANGE.verifier, KEY_CHANGE.keyPtr, proof]);
+    expect(() => rotateKeyCall(VEC.validator, '0x12' as Address, KEY_CHANGE.keyPtr, proof)).toThrow(/address/);
+  });
+
+  it('encodes proposeRecovery with guardian approvals and the new key proof', () => {
+    const call = proposeRecoveryCall(VEC.validator, {
+      account: VEC.account,
+      verifier: KEY_CHANGE.verifier,
+      keyPtr: KEY_CHANGE.keyPtr,
+      guardianSignatures: ['0xaa', '0x', '0xbb'],
+      newKeyProof: '0xcc',
+    });
+    expect(call.to).toBe(VEC.validator);
+    const decoded = decodeFunctionData({ abi: quantumValidatorAbi, data: call.data });
+    expect(decoded.functionName).toBe('proposeRecovery');
+    expect(decoded.args).toEqual([VEC.account, KEY_CHANGE.verifier, KEY_CHANGE.keyPtr, ['0xaa', '0x', '0xbb'], '0xcc']);
+  });
+
+  it('reads recoveryNonce', async () => {
+    const { client: c, calls } = client(arbitrumSepolia, {
+      eth_call: () => `0x${'00'.repeat(31)}07`,
+    });
+    expect(await readRecoveryNonce(c, VEC.validator, VEC.account)).toBe(7n);
+    const call = calls.find((x) => x.method === 'eth_call')!.params[0] as { to: string; data: Hex };
+    expect(call.to.toLowerCase()).toBe(VEC.validator);
+    const decoded = decodeFunctionData({ abi: quantumValidatorAbi, data: call.data });
+    expect(decoded.functionName).toBe('recoveryNonce');
+    expect(decoded.args).toEqual([VEC.account]);
   });
 });
 

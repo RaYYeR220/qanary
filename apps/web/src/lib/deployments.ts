@@ -43,11 +43,17 @@ export const EVM_LABELS: Record<string, string> = {
   drillRegistryFactory: 'Drill registry factory',
   qanaryAccountFactory: 'Account factory',
   pqSafeOwnerFactory: 'Safe owner factory',
+  mldsa44SolidityVerifier: 'ML-DSA-44 verifier (Solidity)',
   solidityMldsa44Verifier: 'ML-DSA-44 verifier (Solidity)',
+  mldsa44VerifierCore: 'ML-DSA-44 verifier core (Solidity)',
+  mldsa44ExpandedKeyStore: 'ML-DSA-44 expanded-key store',
+  keccakF1600Helper: 'Keccak-f[1600] helper',
+  ladderUnavailable: 'Ladder stand-in (fails closed)',
 };
 
 /** Where the Solidity ML-DSA-44 verifier may be recorded, in order of preference. */
 export const FALLBACK_VERIFIER_PATHS = [
+  ['evm', 'mldsa44SolidityVerifier'],
   ['evm', 'solidityMldsa44Verifier'],
   ['fallback', 'solidityMldsa44Verifier'],
 ] as const;

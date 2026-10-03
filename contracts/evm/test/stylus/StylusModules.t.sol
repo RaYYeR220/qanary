@@ -32,11 +32,12 @@ contract StylusModulesTest is DevSign {
     address internal mldsa44;
     address internal mldsa65;
     address internal falcon;
+    address internal ladder;
     KeyStore internal ks;
 
     function setUp() public {
         if (!stylusEnabled()) return;
-        (mldsa44, mldsa65, falcon,) = deployVerifiers();
+        (mldsa44, mldsa65, falcon, ladder) = deployVerifiers();
         ks = new KeyStore();
     }
 
@@ -129,6 +130,34 @@ contract StylusModulesTest is DevSign {
         assertEq(ret, abi.encodeWithSelector(IQanaryPQVerifier.UnsupportedScheme.selector, MLDSA65));
     }
 
+    /// @dev QuantumValidator reads `schemes()` on install: the three Stylus post-quantum verifiers pass
+    ///      (no key-pointer read is involved), and the ladder verifier, which has no `schemes()`, is refused.
+    function test_validator_acceptsStylusPqVerifiersOnly() public stylusOnly {
+        address ptr = ks.store(abi.encodePacked(MLDSA44, new bytes(1312)));
+        address[3] memory pq = [mldsa44, mldsa65, falcon];
+        QuantumValidator qv = new QuantumValidator();
+        for (uint256 i = 0; i < pq.length; ++i) {
+            address account = address(uint160(0xACC0 + i));
+            vm.prank(account);
+            qv.onInstall(
+                abi.encode(
+                    QuantumValidator.InstallData({
+                        verifier: pq[i], keyPtr: ptr, guardians: new bytes[](0), threshold: 0, delay: 0
+                    })
+                )
+            );
+            assertEq(qv.configOf(account).verifier, pq[i]);
+        }
+        bytes memory data = abi.encode(
+            QuantumValidator.InstallData({
+                verifier: ladder, keyPtr: ptr, guardians: new bytes[](0), threshold: 0, delay: 0
+            })
+        );
+        vm.prank(ACCOUNT);
+        vm.expectRevert(QuantumValidator.InvalidKeyConfig.selector);
+        qv.onInstall(data);
+    }
+
     function test_validator_falconPointer() public stylusOnly pointerReads {
         address ptr = _keyPtr("falcon512", FALCON512, "validator-falcon");
         QuantumValidator qv = _install(falcon, ptr);
@@ -187,7 +216,8 @@ contract StylusModulesTest is DevSign {
         );
         bytes[] memory sigs = new bytes[](3);
         for (uint256 i = 0; i < 3; ++i) {
-            sigs[i] = _sign(o[i].scheme, o[i].label, txHash);
+            // each key signs the Safe transaction hash bound to this Safe and chain
+            sigs[i] = _sign(o[i].scheme, o[i].label, o[i].owner.safeMessageDigest(address(safe), txHash));
         }
         bytes memory packed = SafeSig.contractSignatures(owners, sigs);
 
