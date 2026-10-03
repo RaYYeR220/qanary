@@ -7,7 +7,7 @@ import { entryPoint07Abi } from 'viem/account-abstraction';
 import { useConnection, useWalletClient } from 'wagmi';
 import { bucketView, formatDuration } from '@/lib/bucket';
 import { deploymentOf, explorerTx, publicClientFor, type ProductNetwork } from '@/lib/chain';
-import { explainError, type Explained } from '@/lib/errors';
+import { explainError, explainRecordedError, type Explained } from '@/lib/errors';
 import { amount, gas } from '@/lib/format';
 import {
   canary,
@@ -36,33 +36,47 @@ interface Op {
   gasUsed?: bigint;
 }
 
+/** Logs start no earlier than the block the account modules were deployed in. */
+async function logsFrom(client: PublicClient, n: ProductNetwork): Promise<bigint | 'earliest'> {
+  if (!n.modulesTx) return 'earliest';
+  const r = await client.getTransactionReceipt({ hash: n.modulesTx }).catch(() => null);
+  return r ? r.blockNumber : 'earliest';
+}
+
+async function readRegistry(client: PublicClient, registry: Address) {
+  const c = canary(client, registry);
+  const [level, claimed, k1, r1, drill] = await Promise.all([
+    c.level(),
+    Promise.all(([0, 1, 2, 3, 4] as const).map((t) => c.claimed(t))),
+    c.familyBroken(0),
+    c.familyBroken(1),
+    c.isDrill().catch(() => false),
+  ]);
+  return { address: registry, level, claimed, families: [k1, r1] as [boolean, boolean], drill };
+}
+
 async function readTreasury(n: ProductNetwork, account: Address) {
   const client = publicClientFor(n);
   const d = deploymentOf(n);
-  const [code, balance] = await Promise.all([client.getCode({ address: account }), client.getBalance({ address: account })]);
+  const [code, balance, from] = await Promise.all([client.getCode({ address: account }), client.getBalance({ address: account }), logsFrom(client, n)]);
   const deployed = !!code && code !== '0x';
   const root = d.quantumValidator
     ? await client.readContract({ address: d.quantumValidator, abi: quantumValidatorAbi, functionName: 'configOf', args: [account] }).catch(() => null)
     : null;
   const hot = d.hotTierExecutor && deployed ? await hotTier(client, d.hotTierExecutor).status(account).catch(() => null) : null;
   let caps: Record<string, bigint> = {};
+  // the registry the hot tier follows: the latest Configured event says, the canonical one otherwise
+  let followed: Address | undefined = d.canaryRegistry;
   if (d.hotTierExecutor && hot?.configured) {
-    const logs = await client
-      .getContractEvents({ address: d.hotTierExecutor, abi: hotTierExecutorAbi, eventName: 'CapSet', args: { account }, fromBlock: 'earliest' })
-      .catch(() => []);
-    caps = Object.fromEntries(logs.map((l) => [String(l.args.asset).toLowerCase(), l.args.cap as bigint]));
-  }
-  let registry: { level: number; claimed: boolean[]; families: [boolean, boolean] } | null = null;
-  if (d.canaryRegistry) {
-    const c = canary(client, d.canaryRegistry);
-    const [level, claimed, k1, r1] = await Promise.all([
-      c.level(),
-      Promise.all(([0, 1, 2, 3, 4] as const).map((t) => c.claimed(t))),
-      c.familyBroken(0),
-      c.familyBroken(1),
+    const [capLogs, configLogs] = await Promise.all([
+      client.getContractEvents({ address: d.hotTierExecutor, abi: hotTierExecutorAbi, eventName: 'CapSet', args: { account }, fromBlock: from }).catch(() => []),
+      client.getContractEvents({ address: d.hotTierExecutor, abi: hotTierExecutorAbi, eventName: 'Configured', args: { account }, fromBlock: from }).catch(() => []),
     ]);
-    registry = { level, claimed, families: [k1, r1] };
+    caps = Object.fromEntries(capLogs.map((l) => [String(l.args.asset).toLowerCase(), l.args.cap as bigint]));
+    const last = configLogs[configLogs.length - 1];
+    if (last?.args.registry) followed = last.args.registry as Address;
   }
+  const registry = followed ? await readRegistry(client, followed).catch(() => null) : null;
   return { deployed, balance, root, hot, caps, registry };
 }
 
@@ -70,9 +84,10 @@ async function readOps(client: PublicClient, n: ProductNetwork, account: Address
   const d = deploymentOf(n);
   const ops: Op[] = [];
   let partial = false;
+  const start = await logsFrom(client, n);
   const range = async <T,>(fetch: (from: bigint | 'earliest') => Promise<T[]>): Promise<T[]> => {
     try {
-      return await fetch('earliest');
+      return await fetch(start);
     } catch {
       // public nodes cap the log range; fall back to the recent past
       partial = true;
@@ -108,6 +123,9 @@ export function Dashboard({ network, account }: { network: ProductNetwork; accou
   }, [network.key, account]);
 
   const t = q.data;
+  const hero = network.heroes.find((h) => h.address.toLowerCase() === account.toLowerCase());
+  // the run's steps belong to the treasury it opened first (the KMS-rooted one)
+  const run = hero && network.heroes[0]?.address.toLowerCase() === account.toLowerCase() ? network.e2e : [];
   const missing = [!d.quantumValidator && 'quantum validator', !d.hotTierExecutor && 'hot-tier executor', !d.canaryRegistry && 'tripwire registry'].filter(Boolean) as string[];
 
   return (
@@ -222,16 +240,52 @@ export function Dashboard({ network, account }: { network: ProductNetwork; accou
           <Mark state="deploying">The tripwire registry is deploying on {network.name}</Mark>
         ) : t?.registry ? (
           <>
+            <p className={ui.small}>
+              {t.registry.drill ? 'The hot tier follows a drill registry' : 'The hot tier follows the live registry'}:{' '}
+              <Hex value={t.registry.address} network={network} />
+            </p>
             <LadderReadout claimed={t.registry.claimed} label={`Ladder level ${t.registry.level} of 3`} />
             <p className={ui.small}>
-              Level {t.registry.level} of 3. secp256k1 {t.registry.families[0] ? 'broken' : 'holding'}; P-256{' '}
-              {t.registry.families[1] ? 'broken' : 'holding'}.
+              Level {t.registry.level} of 3. secp256k1 {t.registry.families[0] ? 'broken for good' : 'holding'}; P-256{' '}
+              {t.registry.families[1] ? 'broken for good' : 'holding'}.
             </p>
           </>
         ) : (
           <Mark state="pending">Reading the registry…</Mark>
         )}
       </section>
+
+      {hero && run.length > 0 && (
+        <section className={ui.panel} aria-labelledby="run-h">
+          <h2 id="run-h" className={ui.h2}>
+            The live run
+          </h2>
+          <p className={ui.small}>
+            This treasury was opened by the recorded end-to-end run. Every step is on-chain; the refusals are the
+            account working as designed.
+          </p>
+          <ol className={styles.run}>
+            {run.map((r) => {
+              const refused = r.error ? explainRecordedError(r.error, network.nativeSymbol) : null;
+              return (
+                <li key={r.hash}>
+                  <span className={styles.runLabel}>{r.label}</span>
+                  <a href={r.href} target="_blank" rel="noreferrer" className={styles.runTx}>
+                    {r.hash.slice(0, 10)}…
+                  </a>
+                  {refused && (
+                    <div className={ui.stamp}>
+                      <span className={ui.stampWord}>Refused</span>
+                      <span>{refused.message}</span>
+                      <span className={ui.stampName}>{refused.name}</span>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      )}
 
       <section className={ui.panel} aria-labelledby="send-h">
         <h2 id="send-h" className={ui.h2}>

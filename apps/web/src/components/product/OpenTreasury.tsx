@@ -326,7 +326,8 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
 
   return (
     <div className={ui.body}>
-      <NetworkPicker networks={networks} value={network} onChange={setNetwork} />
+      <LiveTreasuries networks={networks} />
+      <NetworkPicker networks={networks} value={network} onChange={setNetwork} legend="Network for your treasury" />
       {!deployed && (
         <p className={ui.notice}>
           On {network.name} the {new Intl.ListFormat('en', { type: 'conjunction' }).format(missing)}{' '}
@@ -668,6 +669,33 @@ function OpenExisting({ network }: { network: ProductNetwork }) {
           Open its dashboard
         </button>
       </form>
+    </section>
+  );
+}
+
+/** The treasuries the recorded run opened, each a read-only dashboard. */
+function LiveTreasuries({ networks }: { networks: ProductNetwork[] }) {
+  const rows = networks.flatMap((n) => n.heroes.map((h) => ({ n, h })));
+  if (!rows.length) return null;
+  return (
+    <section className={ui.panel} aria-labelledby="live-h">
+      <h2 id="live-h" className={ui.h2}>
+        Live treasuries
+      </h2>
+      <p className={ui.small}>
+        Opened by the recorded run and left on-chain. Their dashboards read everything live: the two keys, the cap, the
+        tripwire level and every operation. The run then tripped their drill registry, so their hot keys now refuse.
+      </p>
+      <ul className={styles.live}>
+        {rows.map(({ n, h }) => (
+          <li key={n.key + h.address}>
+            <Link href={`/app/treasury/${n.key}/${h.address}`}>{h.label}</Link>
+            <span className={ui.muted}>
+              {n.name}, {h.key}
+            </span>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

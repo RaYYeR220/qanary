@@ -81,3 +81,33 @@
     padding: 0.1rem 0;
   }
 }
+
+.run {
+  list-style: none;
+  display: grid;
+  gap: 0;
+  max-width: 52rem;
+  font-size: var(--step--1);
+}
+
+.run li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.4rem var(--s1);
+  align-items: baseline;
+  padding: 0.55rem 0;
+  border-bottom: var(--hairline) solid var(--rule);
+}
+
+.run li > div {
+  grid-column: 1 / -1;
+  margin: 0.3rem 0 0.4rem;
+}
+
+.runLabel {
+  color: var(--ink-strong);
+}
+
+.runTx {
+  font-variant-numeric: tabular-nums;
+}

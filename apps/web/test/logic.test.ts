@@ -2,6 +2,7 @@ import { encodeErrorResult, parseAbi, zeroAddress, type Hex } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { bucketView, effectiveCap, formatDuration } from '@/lib/bucket';
 import { ERRORS_ABI, explainRecordedError, explainRevertData } from '@/lib/errors';
+import { amount } from '@/lib/format';
 
 const enc = (errorName: string, args: readonly unknown[]): Hex =>
   encodeErrorResult({ abi: ERRORS_ABI, errorName, args } as Parameters<typeof encodeErrorResult>[0]);
@@ -87,5 +88,18 @@ describe('bucket display math', () => {
     expect(formatDuration(600)).toBe('10 min');
     expect(formatDuration(12_000)).toBe('3 h 20 min');
     expect(formatDuration(190_800)).toBe('2 d 5 h');
+  });
+});
+
+describe('amounts', () => {
+  it('rounds to four decimals and drops trailing zeros', () => {
+    expect(amount(2_000_000_000_000_000n)).toBe('0.002');
+    expect(amount(37_123_456_000_000_000n)).toBe('0.0371');
+    expect(amount(1_234_500_000_000_000_000_000n)).toBe('1,234.5');
+  });
+  it('keeps a small amount visible instead of printing zero', () => {
+    expect(amount(2_000_000_000_000n)).toBe('0.000002');
+    expect(amount(1_000_555_555_555n)).toBe('0.000001');
+    expect(amount(0n)).toBe('0');
   });
 });

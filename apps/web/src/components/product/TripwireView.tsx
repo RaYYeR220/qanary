@@ -87,26 +87,47 @@ function RegistryReading({ network, registry, title }: { network: ProductNetwork
 
 export function TripwireView({ networks, targets, repoUrl }: { networks: ProductNetwork[]; targets: TargetView[]; repoUrl: string | null }) {
   const [network, setNetwork] = useSelectedNetwork(networks);
-  const d = deploymentOf(network);
   return (
     <div className={ui.body}>
-      <NetworkPicker networks={networks} value={network} onChange={setNetwork} />
-
       <section className={ui.panel} aria-labelledby="reg-h">
-        <div className={ui.panelHead}>
-          <h2 id="reg-h" className={ui.h2}>
-            The live registry
-          </h2>
-          {d.canaryRegistry ? <HexText value={d.canaryRegistry} network={network} /> : null}
+        <h2 id="reg-h" className={ui.h2}>
+          The registries, live
+        </h2>
+        <p className={ui.small}>
+          Each network has its live registry, read below as it stands, and the drill registry the recorded run tripped on
+          purpose: the first ladder rung where a ladder verifier runs, then secp256k1. The run&rsquo;s treasuries follow
+          the drill, so their hot keys are shut.
+        </p>
+        <div className={styles.registries}>
+          {networks
+            .filter((n) => deploymentOf(n).canaryRegistry || n.run?.drillRegistry)
+            .map((n) => {
+              const dn = deploymentOf(n);
+              return (
+                <article key={n.key} className={styles.registry}>
+                  <h3 className={ui.h3}>{n.name}</h3>
+                  {dn.canaryRegistry ? (
+                    <>
+                      <p className={ui.small}>
+                        Live registry <HexText value={dn.canaryRegistry} network={n} />
+                      </p>
+                      <RegistryReading network={n} registry={dn.canaryRegistry} title="The live registry" />
+                    </>
+                  ) : (
+                    <Mark state="deploying">The live registry is deploying</Mark>
+                  )}
+                  {n.run?.drillRegistry && (
+                    <>
+                      <p className={ui.small}>
+                        Drill registry of the live run <HexText value={n.run.drillRegistry} network={n} />
+                      </p>
+                      <RegistryReading network={n} registry={n.run.drillRegistry} title="The run's drill" />
+                    </>
+                  )}
+                </article>
+              );
+            })}
         </div>
-        {d.canaryRegistry ? (
-          <RegistryReading network={network} registry={d.canaryRegistry} title="The registry" />
-        ) : (
-          <p className={ui.small}>
-            <Mark state="deploying">Deploying on {network.name}</Mark> The registry&rsquo;s level, family flags and
-            bounties appear here once it is on-chain. The targets below are fixed already.
-          </p>
-        )}
       </section>
 
       <section className={ui.panel} aria-labelledby="targets-h">
@@ -163,6 +184,12 @@ export function TripwireView({ networks, targets, repoUrl }: { networks: Product
       </section>
 
       <LadderCheck networks={networks} targets={targets} />
+      <section className={ui.panel} aria-labelledby="drill-net-h">
+        <h2 id="drill-net-h" className="visually-hidden">
+          Network for your drill
+        </h2>
+        <NetworkPicker networks={networks} value={network} onChange={setNetwork} legend="Network for your drill" />
+      </section>
       <Drill network={network} targets={targets} />
     </div>
   );

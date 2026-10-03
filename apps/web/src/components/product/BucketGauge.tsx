@@ -11,7 +11,9 @@ interface Props {
 
 const CX = 160, CY = 168, R0 = 108, R1 = 140;
 const angle = (f: number) => Math.PI * (1 - Math.max(0, Math.min(1, f)));
-const pt = (f: number, r: number) => [CX + r * Math.cos(angle(f)), CY - r * Math.sin(angle(f))] as const;
+// rounded so the server and the browser print the same coordinates
+const round = (v: number) => Math.round(v * 100) / 100;
+const pt = (f: number, r: number) => [round(CX + r * Math.cos(angle(f))), round(CY - r * Math.sin(angle(f)))] as const;
 
 /** An annulus sector from fraction a to b of the dial. */
 function sector(a: number, b: number, r0 = R0, r1 = R1): string {
