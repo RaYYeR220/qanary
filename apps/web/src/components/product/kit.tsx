@@ -24,7 +24,7 @@ export function Hex({ value, network, kind = 'address', full = false }: { value:
   const text = full ? value : shortHex(value);
   const href = network && kind !== 'none' ? (kind === 'tx' ? explorerTx(network, value) : explorerAddress(network, value)) : undefined;
   return (
-    <span className={ui.hex}>
+    <span className={ui.hex} data-full={full || undefined}>
       {href ? (
         <a href={href} target="_blank" rel="noreferrer" title={value}>
           {text}

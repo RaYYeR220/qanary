@@ -250,6 +250,12 @@
   word-break: break-all;
 }
 
+/* a shortened value (0x4848…8A95) is short enough to keep on one line */
+.hex:not([data-full]) > :first-child {
+  white-space: nowrap;
+  word-break: normal;
+}
+
 .mono {
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
