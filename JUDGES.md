@@ -4,7 +4,7 @@ This page gets you from zero to a checked claim in five minutes: open the app, c
 
 ## Open the app (1 minute)
 
-The live app is at [qanary.vercel.app](https://qanary.vercel.app). It runs on `@qanary/sdk` from this repository and the contract addresses below.
+The live app is at [qanary-amber.vercel.app](https://qanary-amber.vercel.app). It runs on `@qanary/sdk` from this repository and the contract addresses below. The demo video is on [YouTube](https://youtu.be/306lVmwHXPg).
 
 ## Check a live verifier (2 minutes)
 

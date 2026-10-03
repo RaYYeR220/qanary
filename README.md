@@ -2,7 +2,7 @@
 
 Qanary gives Arbitrum treasuries a post-quantum root key. The account’s root authority is an ML-DSA-44, ML-DSA-65 (FIPS 204) or Falcon-512 key, and an Arbitrum Stylus program verifies its signatures on-chain. A classical hot key handles day-to-day transfers inside a per-asset cap, and an ownerless tripwire registry scales that hot tier down or shuts it off when someone proves a classical curve broken.
 
-[Judges guide](JUDGES.md) · [Proof of deployment](PROOF.md) · [Claims](CLAIMS.md) · [Benchmarks](BENCHMARKS.md) · [Architecture](docs/ARCHITECTURE.md) · [Security](SECURITY.md)
+[Live app](https://qanary-amber.vercel.app) · [Demo video](https://youtu.be/306lVmwHXPg) · [Judges guide](JUDGES.md) · [Proof of deployment](PROOF.md) · [Claims](CLAIMS.md) · [Benchmarks](BENCHMARKS.md) · [Architecture](docs/ARCHITECTURE.md) · [Security](SECURITY.md)
 
 ## Why accounts need a post-quantum key now
 
