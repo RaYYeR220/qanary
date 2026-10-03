@@ -1,0 +1,92 @@
+.ladder {
+  --pad: 1rem;
+  --span: calc(100% - 2 * var(--pad));
+  max-width: 36rem;
+  margin: 0;
+}
+
+.track {
+  position: relative;
+  height: 44px;
+}
+
+.rails {
+  position: absolute;
+  left: var(--pad);
+  right: var(--pad);
+  top: 10px;
+  bottom: 10px;
+  border-top: var(--hairline) solid var(--rule-strong);
+  border-bottom: var(--hairline) solid var(--rule-strong);
+}
+
+.rung {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  width: 0;
+  left: calc(var(--pad) + var(--span) * (var(--i) - 0.5) / 5);
+}
+
+.rung::before,
+.rung::after {
+  content: '';
+  position: absolute;
+  left: -1px;
+  width: 2px;
+  height: 50%;
+  background: var(--canary-500);
+  transition: transform var(--t-state) var(--ease), height var(--t-state) var(--ease), background-color var(--t-state) var(--ease);
+}
+
+.rung::before {
+  top: 0;
+  transform-origin: 50% 0;
+}
+
+.rung::after {
+  bottom: 0;
+  transform-origin: 50% 100%;
+}
+
+.rung[data-family='true']::before,
+.rung[data-family='true']::after {
+  left: -1.5px;
+  width: 3px;
+}
+
+.rung[data-broken='true']::before {
+  height: 34%;
+  background: var(--rust);
+  transform: rotate(-16deg);
+}
+
+.rung[data-broken='true']::after {
+  height: 30%;
+  background: var(--rust);
+  transform: rotate(12deg);
+}
+
+.ticks {
+  position: relative;
+  height: 1.5rem;
+  font-size: var(--step--2);
+  font-variant-numeric: lining-nums;
+}
+
+.tick {
+  position: absolute;
+  top: 0;
+  left: calc(var(--pad) + var(--span) * (var(--i) - 0.5) / 5);
+  transform: translateX(-50%);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.tick[data-broken='true'] {
+  font-family: var(--face-text-italic);
+  font-style: italic;
+  color: var(--ink-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--rust);
+}
