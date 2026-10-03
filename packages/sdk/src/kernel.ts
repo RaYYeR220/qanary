@@ -1,10 +1,22 @@
 import { createKernelAccount, KernelV3_3AccountAbi, type CreateKernelAccountReturnType } from '@zerodev/sdk';
 import { KERNEL_V3_3 } from '@zerodev/sdk/constants';
-import { encodeFunctionData, type Address, type Hex } from 'viem';
+import {
+  BaseError,
+  concat,
+  decodeErrorResult,
+  encodeFunctionData,
+  isAddressEqual,
+  parseAbi,
+  zeroAddress,
+  type Address,
+  type Client,
+  type Hex,
+} from 'viem';
 import { entryPoint07Address } from 'viem/account-abstraction';
-import { getChainId, getCode } from 'viem/actions';
+import { call, getChainId, getCode } from 'viem/actions';
 import { getDeployment, requireContract, requireVerifier, type Deployment } from './deployments.js';
 import { hotTierInitData, MODULE_TYPE_EXECUTOR, type HotSetup } from './hotTier.js';
+import { keyBlob, predictKeyPointer } from './keystore.js';
 import type { PqSigner } from './schemes.js';
 import { toQuantumValidator } from './validator.js';
 
@@ -115,7 +127,24 @@ export async function createQanaryAccount(
         migrate && executor && hotInitData ? [{ type: MODULE_TYPE_EXECUTOR, address: executor, data: hotInitData }] : undefined,
     });
 
-  const account = await create(opts.address, false);
+  // The EntryPoint works the address out by running the deployment, whose validator install reads
+  // the root key from the KeyStore. Before `storeKey` there is no key to read and the answer is
+  // the zero address, so the lookup runs with the key's code in place (see `counterfactualAddress`).
+  let address = opts.address;
+  if (address === undefined) {
+    const blob = keyBlob(opts.signer);
+    const keyPtr = predictKeyPointer(requireContract(d, 'keyStore'), blob);
+    // the deployment call does not depend on the address: a placeholder skips ZeroDev's own lookup
+    const draft = await create(DRAFT_ADDRESS, false);
+    const { factory, factoryData } = await draft.getFactoryArgs();
+    address =
+      factory && factoryData
+        ? await counterfactualAddress(client as Client, { entryPoint: d.entryPoint, factory, factoryData, keyPtr, blob })
+        : // a node that reports code at the placeholder gives no deployment call: ask the plain way
+          (await create(undefined, false)).address;
+  }
+  if (isAddressEqual(address, zeroAddress)) throw new Error('createQanaryAccount: the account address cannot be the zero address');
+  const account = await create(address, false);
   if (!hotInitData || opts.hotInstall === 'initCode' || opts.installHotTier === false) return account;
   let migrate = opts.installHotTier === true;
   if (!migrate) {
@@ -123,4 +152,56 @@ export async function createQanaryAccount(
     migrate = !code || code === '0x';
   }
   return migrate ? create(account.address, true) : account;
+}
+
+/** Placeholder address for an account object built only to read its deployment call. */
+const DRAFT_ADDRESS: Address = '0x0000000000000000000000000000000000000001';
+
+const entryPointSenderAbi = parseAbi(['function getSenderAddress(bytes initCode)', 'error SenderAddressResult(address sender)']);
+
+/** The revert data inside a failed call, wherever viem nested it. */
+function revertData(e: unknown): Hex | undefined {
+  if (!(e instanceof BaseError)) return undefined;
+  const found = e.walk((x) => {
+    const d = (x as { data?: unknown }).data;
+    return typeof d === 'string' || (typeof d === 'object' && d !== null && typeof (d as { data?: unknown }).data === 'string');
+  }) as { data?: Hex | { data: Hex } } | null;
+  const d = found?.data;
+  return typeof d === 'string' ? d : d?.data;
+}
+
+/**
+ * The address the EntryPoint deploys `factory`/`factoryData` to, asked with `EntryPoint.getSenderAddress`
+ * while the root key's code (`0x00 ‖ blob`, what `KeyStore.store` writes at `keyPtr`) is put in place by a
+ * state override of that one call. It works the same before and after `storeKey`. Throws instead of
+ * returning the zero address, which is what the EntryPoint reports when the deployment fails.
+ */
+export async function counterfactualAddress(
+  client: Client,
+  args: { entryPoint: Address; factory: Address; factoryData: Hex; keyPtr: Address; blob: Hex },
+): Promise<Address> {
+  let sender: Address | undefined;
+  try {
+    await call(client, {
+      to: args.entryPoint,
+      data: encodeFunctionData({ abi: entryPointSenderAbi, functionName: 'getSenderAddress', args: [concat([args.factory, args.factoryData])] }),
+      stateOverride: [{ address: args.keyPtr, code: concat(['0x00', args.blob]) }],
+    });
+  } catch (e) {
+    const data = revertData(e);
+    if (data) {
+      try {
+        const r = decodeErrorResult({ abi: entryPointSenderAbi, data });
+        if (r.errorName === 'SenderAddressResult') sender = r.args[0];
+      } catch {
+        // some other revert: reported below
+      }
+    }
+    if (!sender) throw e;
+  }
+  if (!sender) throw new Error('counterfactualAddress: getSenderAddress returned instead of reverting with the address');
+  if (isAddressEqual(sender, zeroAddress)) {
+    throw new Error('counterfactualAddress: the account deployment fails (the EntryPoint reports the zero address)');
+  }
+  return sender;
 }

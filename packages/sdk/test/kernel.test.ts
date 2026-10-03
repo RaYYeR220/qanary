@@ -119,6 +119,42 @@ function decodeExecute(callData: Hex) {
 }
 
 describe('createQanaryAccount', () => {
+  it('works the address out with the root key in place, before the key is stored', async () => {
+    // the EntryPoint reports the account only when the key's code is at its pointer, zero otherwise
+    let override: Hex | undefined;
+    const rpc = mockTransport({
+      eth_chainId: () => numberToHex(arbitrumSepolia.id),
+      eth_getCode: () => '0x',
+      eth_call: (params) => {
+        const state = params[2] as Record<string, { code?: Hex }> | undefined;
+        override = state && Object.entries(state).find(([a]) => a.toLowerCase() === keyPtr.toLowerCase())?.[1].code;
+        throw Object.assign(new Error('execution reverted'), {
+          code: 3,
+          data: concat([SENDER_ADDRESS_RESULT, pad(override ? ACCOUNT : '0x00')]),
+        });
+      },
+    });
+    const client = createPublicClient({ chain: arbitrumSepolia, transport: rpc.transport });
+    const account = await createQanaryAccount(client, { signer, registry: REGISTRY, deployment });
+    expect(account.address).toBe(ACCOUNT);
+    expect(override).toBe(concat(['0x00', keyBlob(signer)]));
+  });
+
+  it('never returns the zero address', async () => {
+    const rpc = mockTransport({
+      eth_chainId: () => numberToHex(arbitrumSepolia.id),
+      eth_getCode: () => '0x',
+      eth_call: () => {
+        throw Object.assign(new Error('execution reverted'), { code: 3, data: concat([SENDER_ADDRESS_RESULT, pad('0x00')]) });
+      },
+    });
+    const client = createPublicClient({ chain: arbitrumSepolia, transport: rpc.transport });
+    await expect(createQanaryAccount(client, { signer, registry: REGISTRY, deployment })).rejects.toThrow(/zero address/);
+    await expect(
+      createQanaryAccount(client, { signer, registry: REGISTRY, deployment, address: '0x0000000000000000000000000000000000000000' }),
+    ).rejects.toThrow(/zero address/);
+  });
+
   it('builds Kernel v3.3 initCode with the QuantumValidator as root and no guardians', async () => {
     const { client } = chain();
     const account = await createQanaryAccount(client, { signer, registry: REGISTRY, deployment, index: 7n });

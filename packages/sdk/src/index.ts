@@ -62,6 +62,7 @@ export { PQ_SAFE_OWNER_DOMAIN, pqSafeOwnerDigest, safe130Erc1271Hash } from './s
 export {
   QANARY_ENTRY_POINT,
   QANARY_KERNEL_VERSION,
+  counterfactualAddress,
   createQanaryAccount,
   type CreateQanaryAccountOptions,
   type KernelAccountClientBase,
