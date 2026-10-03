@@ -41,8 +41,10 @@ export function Proof({ records }: { records: NetworkRecord[] }) {
           <a href={ARBITRUM_ONE_PAUSE.forum} target="_blank" rel="noreferrer">
             notice
           </a>
-          ). Until activations return, the same account modules run there with {ARBITRUM_ONE_PAUSE.fallback}, behind
-          the same ERC-7913 interface. An account moves to the Stylus verifier with one key rotation.
+          ). The same account modules are live there all the same, with {ARBITRUM_ONE_PAUSE.fallback}, behind the
+          same ERC-7913 interface. A check costs more than an ERC-4337 bundler allows for validation, so accounts there
+          send their operations to the EntryPoint themselves, as the live run below did. When activations return, an
+          account moves to the Stylus verifier with one key rotation.
         </p>
       </aside>
       <div className={book.main}>

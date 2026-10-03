@@ -7,11 +7,18 @@ import {
   type NetworkRecord,
   type StylusKey,
 } from '@/lib/deployments';
+import Link from 'next/link';
 import { explainRecordedError } from '@/lib/errors';
 import styles from './Register.module.css';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 const kb = (n: number) => `${(n / 1024).toFixed(1)} KB`;
+/** A refusal reads as its own sentence after "Refused, as intended." */
+const sentence = (m: string) => {
+  const t = m.replace(/^Refused:\s*/, '');
+  // curve names stay lowercase
+  return /^secp/.test(t) ? t : t.charAt(0).toUpperCase() + t.slice(1);
+};
 
 function stylusDetail(key: StylusKey, records: NetworkRecord[]): string {
   const any = records.map((r) => r.stylus[key]).find(Boolean);
@@ -53,7 +60,7 @@ function Cell({ c }: { c: Contract }) {
 export function Register({ records }: { records: NetworkRecord[] }) {
   const byNet = new Map(records.map((r) => [r.network.key, r]));
   const evmKeys = [...new Set(records.flatMap((r) => r.evm.map((c) => c.key)))];
-  const e2e = records.flatMap((r) => r.e2e.map((t) => ({ ...t, net: r.network.name })));
+  const runs = records.filter((r) => r.e2e.length > 0);
   return (
     <div className={styles.register}>
       <table className={styles.table}>
@@ -131,28 +138,47 @@ export function Register({ records }: { records: NetworkRecord[] }) {
 
       <div className={styles.e2e}>
         <h3 className={styles.txHead}>The live run, transaction by transaction</h3>
-        {e2e.length ? (
-          <ul className={styles.txList}>
-            {e2e.map((t) => {
-              const refused = t.error ? explainRecordedError(t.error) : null;
-              return (
-                <li key={t.net + t.hash} data-refused={refused ? 'true' : undefined}>
-                  <span className={styles.txLabel}>
-                    {t.label}
-                    {refused && (
-                      <span className={styles.refused}>
-                        Refused, as intended: {refused.message} <span className={styles.errName}>{refused.name}</span>
+        {runs.length ? (
+          runs.map((r) => (
+            <section key={r.network.key} className={styles.run} aria-label={`The live run on ${r.network.name}`}>
+              <h4 className={styles.runHead}>{r.network.name}</h4>
+              {r.heroes && r.heroes.length > 0 && (
+                <ul className={styles.heroes}>
+                  {r.heroes.map((h) => (
+                    <li key={h.address}>
+                      <span className={styles.heroLabel}>{h.label}</span>
+                      <a href={`${r.network.explorer}/address/${h.address}`} className={styles.addr} target="_blank" rel="noreferrer">
+                        {shortHex(h.address)}
+                      </a>
+                      <Link href={`/app/treasury/${r.network.key}/${h.address}`} className={styles.dash}>
+                        dashboard
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <ol className={styles.txList}>
+                {r.e2e.map((t) => {
+                  const refused = t.error ? explainRecordedError(t.error) : null;
+                  return (
+                    <li key={t.hash} data-refused={refused ? 'true' : undefined}>
+                      <span className={styles.txLabel}>
+                        {t.label}
+                        {refused && (
+                          <span className={styles.refused}>
+                            Refused, as intended. {sentence(refused.message)} <span className={styles.errName}>{refused.name}</span>
+                          </span>
+                        )}
                       </span>
-                    )}
-                  </span>
-                  <span className={styles.txNet}>{t.net}</span>
-                  <a href={t.href} className={styles.addr} target="_blank" rel="noreferrer">
-                    {shortHex(t.hash)}
-                  </a>
-                </li>
-              );
-            })}
-          </ul>
+                      <a href={t.href} className={styles.addr} target="_blank" rel="noreferrer">
+                        {shortHex(t.hash)}
+                      </a>
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+          ))
         ) : (
           <p className={styles.empty}>
             None recorded yet. Each one appears here with an explorer link once it is on-chain.

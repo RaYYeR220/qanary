@@ -119,11 +119,44 @@ a.pending {
   min-width: 0;
 }
 
-.txNet {
+.run {
+  margin-top: var(--s1);
+}
+
+.runHead {
   font-family: var(--face-text-italic);
   font-style: italic;
+  font-weight: 400;
+  font-size: var(--step-0);
   color: var(--ink-muted);
-  min-width: 9rem;
+  padding-bottom: 0.3rem;
+  border-bottom: var(--hairline) solid var(--rule-strong);
+}
+
+.heroes {
+  list-style: none;
+  margin-top: 0.4rem;
+  font-size: var(--step--1);
+}
+
+.heroes li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  padding-block: 0.3rem;
+}
+
+.heroLabel {
+  flex: 1 1 18rem;
+  min-width: 0;
+  color: var(--ink);
+}
+
+.dash {
+  font-family: var(--face-text-italic);
+  font-style: italic;
+  font-size: var(--step--2);
 }
 
 .empty {
