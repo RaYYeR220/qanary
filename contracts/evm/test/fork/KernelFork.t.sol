@@ -425,7 +425,7 @@ contract KernelForkTest is ArbOneFork {
         assertEq(twin.isValidSignature(h, _pq1271(address(twin), h)), MAGIC);
     }
 
-    // ---------------------------------------------------------------- brief's initConfig encoding
+    // ---------------------------------------------------------------- initConfig encoding
 
     /// @dev `initialize(..., initConfig = [installModule(2, hotTier, …)])` through the factory directly (not
     ///      through `initCode`: the executor's `onInstall` is not ERC-7562-safe during validation).

@@ -80,15 +80,25 @@ type   = AccountMessage(address account, bytes32 hash)
 
 Kernel v3.3 wraps the application hash once before it reaches the validator: `kernelHash` is the EIP-712 digest of `Kernel(bytes32 hash)` under the account’s own domain `{ name: "Kernel", version: "0.3.3", chainId, verifyingContract: account }`. The key therefore signs `accountDigest(account, kernelHash)`, and the signature passed to `account.isValidSignature(hash, sig)` is `0x01 ‖ QuantumValidator ‖ pqSignature` (or `0x00 ‖ pqSignature` to route to the root). `kernelWrappedHash`, `accountDigest` and `kernelErc1271Signature` in the SDK build each step; `test_erc1271_pqSignatureThroughKernelWrapper` checks them against the real Kernel on an Arbitrum One fork.
 
-### Recovery approvals
+### Key rotation and recovery
 
-Guardians approve a replacement key by signing an EIP-712 digest under the validator’s domain:
+A new root key proves possession before it replaces the root. It signs an EIP-712 digest under the validator’s domain (`QanaryValidator` / `1`, as above):
+
+```text
+Rotation(address account, address verifier, address keyPtr, uint256 nonce)
+```
+
+The account calls `rotateKey(verifier, keyPtr, proof)`, where `proof` is the new key’s signature over `rotationDigest(account, verifier, keyPtr)`. A pair that can never verify (a scheme the verifier does not support, an inactive Stylus program, an unprepared key on the Solidity fallback) cannot produce the proof, so it cannot brick the account.
+
+Guardians approve a replacement key by signing a second digest under the same domain:
 
 ```text
 Recovery(address account, address verifier, address keyPtr, uint256 nonce)
 ```
 
-The nonce is per account and only grows: every proposal, rotation, guardian change, cancellation, executed recovery and uninstall increments it, so approvals collected but not submitted die at the next change.
+Anyone may submit `proposeRecovery(account, verifier, keyPtr, guardianSigs, newKeyProof)`: `guardianSigs[i]` is guardian `i`’s signature over `recoveryDigest`, an empty entry abstains, and `newKeyProof` is the proposed key’s signature over `rotationDigest` at the same nonce. `onInstall` needs no proof, because the first user operation’s own signature check proves the key.
+
+Both digests use `recoveryNonce(account)`. The nonce is per account and only grows: every proposal, rotation, guardian change, cancellation, executed recovery and uninstall increments it, so approvals and proofs collected but not submitted die at the next change. In one batch, anything that bumps the nonce before `rotateKey` (another rotation, `setGuardians`, `cancelRecovery`) invalidates its proof. In the SDK, `rotationDigest`, `recoveryDigest` and `readRecoveryNonce` build the digests, and `rotateKeyCall` and `proposeRecoveryCall` build the calls.
 
 ### Hot operations
 
@@ -116,7 +126,22 @@ The guarded keys are nothing-up-my-sleeve points. For each curve, `x = SHA-256("
 
 ### Safe owner signatures
 
-A Safe owner slot holds a `PQSafeOwner` contract. In a Safe signature blob each such owner is a contract signature: `r` = owner address, `s` = offset of the dynamic part, `v` = 0, and the dynamic part is the post-quantum signature. Safe 1.3.0 and 1.4.1 call the legacy `isValidSignature(bytes data, bytes sig)`, and `PQSafeOwner` verifies `keccak256(data)`, which for `execTransaction` is the Safe transaction hash. The bytes32 form returns `0x1626ba7e`; the legacy form returns `0x20c13b0b`.
+A Safe owner slot holds a `PQSafeOwner` contract. In a Safe signature blob each such owner is a contract signature: `r` = owner address, `s` = offset of the dynamic part, `v` = 0, and the dynamic part is the post-quantum signature. The key never signs the hash the Safe shows the owner. It signs an EIP-712 digest that binds the Safe asking, the chain and the owner contract:
+
+```text
+domain = { name: "QanaryPQSafeOwner", version: "1",
+           chainId, verifyingContract: PQSafeOwner }
+type   = SafeMessage(address safe, bytes32 hash)
+digest = safeMessageDigest(safe, hash)    // safe = msg.sender of isValidSignature
+```
+
+`hash` is the `bytes32` argument of `isValidSignature(bytes32, bytes)`, or `keccak256(data)` on the legacy `isValidSignature(bytes data, bytes sig)` that Safe 1.3.0 and 1.4.1 call. Per Safe path:
+
+- **`execTransaction`** (1.3.0, 1.4.1, and 1.5.0 through the `bytes32` entry point): `hash` is the Safe transaction hash
+- **ERC-1271 on a Safe 1.3.0**: its `CompatibilityFallbackHandler` forwards `data = abi.encode(appHash)`, so `hash = keccak256(abi.encode(appHash))` (`safe130Erc1271Hash` in the SDK)
+- **ERC-1271 on a Safe 1.4.1**: the owner sees the Safe’s own message, so `hash = getMessageHashForSafe(safe, abi.encode(appHash))`
+
+The SDK computes the digest with `pqSafeOwnerDigest({ owner, chainId, safe, hash })`. The bytes32 form returns `0x1626ba7e`; the legacy form returns `0x20c13b0b`. Safe 1.3.0 and 1.4.1 are tested (`PQSafeOwnerSafe130Test`, `PQSafeOwnerTest`, and the Security Council fork simulation); 1.5.0 follows from its specification and is untested.
 
 ### Off-chain keys
 
@@ -136,9 +161,13 @@ The KeyStore has no admin and no state besides the deployed blobs. A pointer is 
 
 ### QuantumValidator
 
-`QuantumValidator` stores one `(verifier, keyPtr)` pair per account and trusts that verifier completely. It rejects a verifier without code (which would brick the account) and any address at or below `0xffff`, the precompile range: the identity precompile at `0x04` echoes its calldata, whose first word is the magic value, and would accept every signature. `validateUserOp` and the ERC-1271 path never revert on a bad signature, a reverting verifier or an uninstalled account; they return failure.
+`QuantumValidator` stores one `(verifier, keyPtr)` pair per account and trusts that verifier completely. It accepts a verifier, for the root (install, `rotateKey`, recovery target) and for every guardian, only if it is deployed code above `0xffff`, the precompile range, and its `schemes()` returns a non-empty list of post-quantum scheme ids (1 FN-DSA-512, 2 ML-DSA-44, 3 ML-DSA-65, 4 Falcon-512) in the strict ABI encoding of a `uint8[]` with at most four entries. A verifier without code would brick the account, and the identity precompile at `0x04` echoes its calldata, whose first word is the magic value, so it would accept every signature. The Stylus verifiers and the Solidity fallback implement `schemes()`; OpenZeppelin’s P-256, WebAuthn and RSA ERC-7913 verifiers do not and are rejected. The check trusts the verifier to describe itself honestly: it keeps honest configurations post-quantum and does not stop a verifier written to lie. `validateUserOp` and the ERC-1271 path never revert on a bad signature, a reverting verifier or an uninstalled account; they return failure.
 
-Only the account can rotate its key (`rotateKey`) or replace its guardians (`setGuardians`). Guardians are optional ERC-7913 signers (`verifier ‖ key`, 1 to 16 of them, unique) with a threshold and a delay of at least one hour. Anyone may submit `proposeRecovery` with enough guardian approvals; the account can `cancelRecovery` until the delay passes, after which anyone may `executeRecovery`. The validator does not check that guardian verifiers are post-quantum: a guardian set of passkeys or ECDSA keys is a classical path to the root, so a cold account keeps its root post-quantum only with post-quantum guardians and a delay long enough to notice and cancel.
+Only the account can rotate its key (`rotateKey`, with the new key’s proof of possession) or replace its guardians (`setGuardians`). Guardians are optional ERC-7913 signers (`verifier ‖ key`, 1 to 16 of them, unique by their bytes, each on a post-quantum verifier) with a threshold and a delay of at least `MIN_RECOVERY_DELAY` = 24 hours. Anyone may submit `proposeRecovery` with enough guardian approvals and the new key’s proof; the account can `cancelRecovery` until the delay passes, after which anyone may `executeRecovery`. Guardians who reach the threshold can propose again after a cancel; there is no cooldown, so replace a suspect guardian set with `setGuardians`.
+
+Validation, ERC-1271 and `rotateKey` all go through the one configured verifier. A Stylus program stops executing when its activation lapses (365 days without `ArbWasm.codehashKeepalive`, or a Stylus version bump in an ArbOS upgrade); while activations and reactivations are paused it cannot come back, and the account cannot sign the `rotateKey` that would move it away. Run a keepalive for every verifier in use, and give the account guardians whose keys use a different verifier, such as the Solidity ML-DSA-44 fallback, so recovery can move the root away from an expired or paused program. ApeChain has no Solidity fallback deployed, so there the keepalive is the only mitigation.
+
+`PQSafeOwner`, `QanaryAccount` and `QanaryMultisigAccount` do not run these checks: they accept any verifier address. Use the verifier addresses recorded in `deployments/<network>.json` with them.
 
 ### HotTierExecutor
 
@@ -146,17 +175,19 @@ This is the executor’s own trust model, from its NatSpec:
 
 > Every account-scoped setter acts on `msg.sender` (the account, authorised by its post-quantum key); there are no owners or admins. Everything fails closed: an unconfigured account, a reverting registry or a reverting `balanceOf` on a tracked asset reverts the whole operation. Outflows are the net decrease of each tracked asset’s balance across the batch; assets that are not tracked can only leave through explicitly allowlisted calls.
 >
-> Trust model. Hard denials that no configuration can lift: calls to the account itself, to this executor or to `address(0)` (OZ ERC-7579 accounts treat target 0 as a self-call); calls to the account’s installed modules (ERC-7579: validators, executors, hooks, and a fallback handler registered for the selector being called; Safe: enabled modules), whose admin functions act on `msg.sender == account`; approval-class selectors (`approve`, `increaseAllowance`, `setApprovalForAll`, Permit2 `approve`, EIP-2612 `permit`), which would let a spender pull funds later, outside the executor; and empty calldata without value. Under these rules the hot key can move at most `cap * bps / 10000` plus one window of refill of each tracked asset per window. The bound does NOT hold when:
+> Trust model. Hard denials that no configuration can lift: calls to the account itself, to this executor or to `address(0)` (OZ ERC-7579 accounts treat target 0 as a self-call); calls to the account’s installed modules (ERC-7579: validators, executors, hooks, and a fallback handler registered for the selector being called; Safe: enabled modules), whose admin functions act on `msg.sender == account`; approval-class selectors (`approve`, `increaseAllowance`, `setApprovalForAll`, Permit2 `approve`, EIP-2612 `permit`), which would let a spender pull funds later, outside the executor; and empty calldata without value. Module detection asks the account (`isModuleInstalled` / `isModuleEnabled`), so it is only as complete as the account’s answer, and for hooks it is best-effort: Kernel v3.3 answers `false` for module type 4 (its hooks hang off validators, executors and selectors, e.g. `validationConfig(vId).hook`), and so does OZ’s `AccountERC7579` without hooks. A Kernel hook, including a per-validation hook, is therefore not detected: never allowlist one. Under these rules the hot key can move at most `cap * bps / 10000` plus one window of refill of each tracked asset per window. The bound does NOT hold when:
 >
 > - an allowlisted call converts an untracked position or credit into a tracked asset (vault or LP withdrawals, borrows, flash-style inflows): the tracked inflow masks a tracked outflow while the untracked side is drained. Track every asset an allowlisted call touches;
 > - a tracked token’s `balanceOf` can be inflated or manipulated within the batch (rebasing or hook tokens, a malicious token);
 > - an allowlisted target exposes admin functions keyed on `msg.sender == account` on a contract that is not a detectable module: a Safe’s fallback handler or guard, a Safe7579 adapter seen through the ERC-7579 interface, a fallback handler called with a selector other than the one it is registered for, an external registry or position manager.
 >
+> Incident response: rotate the hot key first (`setHotSigner`, which also kills pending signatures). Lowering caps with `setCap` or `configure` keeps the current bucket level (clamped to the new cap), so a compromised key keeps at most what it could already move; an uninstall followed by a fresh install starts every bucket full.
+>
 > Safe: the native `disableModule` does not call `onUninstall`, so the configuration survives and comes back on a later re-enable. Batch `executor.onUninstall("")` with `disableModule`.
 
-Module detection asks the account’s own `isModuleInstalled`. Kernel v3.3 answers only for module types 1 to 3, so on Kernel a hook is not detected by type: keep hook addresses off the allowlist. The selector denylist covers the five approval selectors above; other approval-style functions (DAI and Permit2 `permit`, ERC-777 operators, ERC-6909 operators, ERC-1363 `approveAndCall`) are blocked only because nothing allowlists them by default, so the root must not allowlist them. Without allowlist entries the hot key can only `transfer` tracked ERC-20 tokens and send native value with empty calldata, and both count against the caps. The invariant suite (`HotTierExecutorInvariantTest`) checks the outflow bound over random sequences of transfers, level changes and time warps.
+ERC-7579 module types above 4 are not detected either, so keep every module address off the allowlist. The selector denylist covers exactly the five approval selectors above. Other approval-style functions (DAI and Permit2 `permit`, ERC-777 `authorizeOperator`, ERC-6909 `approve` and `setOperator`, ERC-1363 `approveAndCall`, the Uniswap v3 position manager’s `permit`, legacy `increaseApproval`) are blocked only because nothing allowlists them by default, so the root must not allowlist them. Without allowlist entries the hot key can only `transfer` tracked ERC-20 tokens and send native value with empty calldata, and both count against the caps. The invariant suite (`HotTierExecutorInvariantTest`) checks the outflow bound over random sequences of transfers, level changes and time warps.
 
-`configure` replaces the whole configuration and refills every bucket. After a hot-key compromise, rotate the hot key with `setHotSigner` or uninstall the executor; lowering caps with `configure` alone hands the same key a fresh cap.
+`configure` replaces the whole configuration but carries the bucket of every asset that stays tracked: its new level is `min(level before, new effective cap)`, where the level before is refilled under the old configuration. Newly tracked assets start full, and so does every asset after an uninstall and a fresh install. During a reconfiguration a reverting registry counts as scale 0, so the carried buckets start empty instead of blocking the change (`test_reconfigure_*`). In an incident, rotate the hot key with `setHotSigner` first.
 
 ### QuantumCanaryRegistry
 
@@ -164,11 +195,13 @@ The registry has no owner and no way to lower a level or un-claim a target. Clai
 
 ### PQSafeOwner
 
-A `PQSafeOwner` is immutable `(verifier, keyPtr)` with no admin, and the factory derives its address from that pair. It verifies the hash it is given and does not bind it to the calling Safe. Safe’s `execTransaction` path is still Safe-bound, because the transaction hash commits to the Safe’s domain and chain. Through Safe 1.3.0’s ERC-1271 fallback handler the owner receives the raw application message, so a message signature by a post-quantum owner of two Safe 1.3.0 accounts is valid for both: give each Safe its own owner key, or use Safe 1.4.1, whose handler passes the Safe-bound message.
+A `PQSafeOwner` is immutable `(verifier, keyPtr)` with no admin, and the factory derives its address from that pair, so one owner contract exists per key. Every signature is bound to the Safe that asks (`msg.sender`, which is the Safe on every Safe code path because `checkSignatures` runs in the Safe’s context), to the chain and to the owner contract, through `safeMessageDigest` ([format](#safe-owner-signatures)). This matters on Safe 1.3.0, whose ERC-1271 fallback handler forwards the raw application message to contract owners: without the binding, an approval for one Safe would also approve every other Safe the same key owns. `test_safe130_signatureForSafeA_isInvalidOnSafeB` and `test_forkSimulation_erc1271_boundToTheCouncilSafe` check this on the real Safe 1.3.0 code.
+
+Two Safe behaviours remain. Safe’s `checkSignatures(dataHash, data, signatures)` does not check `keccak256(data) == dataHash` for contract owners (Safe 1.4.1 and earlier), so a PQ-owned Safe must not be used with an integrator that calls it as an oracle with caller-supplied `data`. And on Safe 1.3.0 the owners’ signature of a transaction is also a valid legacy `isValidSignature(bytes,bytes)` approval of that transaction’s `txHashData` on the same Safe, because both paths hand the owner the same `data`. `PQSafeOwner` does not check that its verifier is post-quantum; deploy owners only with a verifier from `deployments/<network>.json`.
 
 ### OpenZeppelin accounts
 
-`QanaryAccount` and `QanaryMultisigAccount` are OpenZeppelin 5.7 `Account` clones whose signer is an ERC-7913 `verifier ‖ keyPtr` (weighted set for the multisig). Implementations are locked, the factory creates and initializes a clone in one call, and the predicted address commits to the full signer configuration. ERC-1271 accepts only ERC-7739 nested signatures. ERC-7821 `execute` is restricted to the EntryPoint v0.9 and the account itself.
+`QanaryAccount` and `QanaryMultisigAccount` are OpenZeppelin 5.7 `Account` clones whose signer is an ERC-7913 `verifier ‖ keyPtr` (weighted set for the multisig). Implementations are locked, the factory creates and initializes a clone in one call, and the predicted address commits to the full signer configuration. ERC-1271 accepts only ERC-7739 nested signatures. ERC-7821 `execute` is restricted to the EntryPoint v0.9 and the account itself. `initialize` does not check the signer’s verifier, so a classical or accept-all verifier would be taken as is; create accounts only with a verifier from `deployments/<network>.json`.
 
 ### Solidity ML-DSA-44 fallback
 
@@ -176,9 +209,10 @@ The fallback adapter trusts the core and the expanded-key store it was deployed 
 
 ## ERC-4337 validation rules (ERC-7562)
 
-Qanary keeps every user-operation validation path inside the ERC-7562 rules that public bundlers enforce:
+Qanary keeps every user-operation validation path inside the ERC-7562 rules that public bundlers enforce. This is checked against the rules and in tests, not against a live bundler: every recorded user operation was self-bundled through `EntryPoint.handleOps`, and whether a bundler’s tracer accepts the Stylus verifier call during validation is untested.
 
 - **Associated storage only**: `validateUserOp` reads `_config[msg.sender]`, a mapping slot keyed by the account. Recovery and guardian state live in separate mappings that validation never touches
+- **Install inside validation**: without guardians, `onInstall` writes only `_config[msg.sender]` and makes one `schemes()` STATICCALL to the verifier, with `GAS` immediately before the call. The verifiers answer `schemes()` without reading storage, and `test_onInstall_withoutGuardians_touchesOnlyAssociatedStorage` checks both
 - **No banned opcodes in verifiers**: the Stylus verifiers read no storage and no environment. The Solidity fallback’s call tree (adapter, core, helper) contains no `GAS` without an immediately following call, no block or environment opcodes, no `CREATE`/`CREATE2`, no `SELFDESTRUCT` and no storage or transient-storage access. `test_erc7562_verifyPathHasNoBannedOpcodes` scans the deployed bytecode, and the same scan finds the nine offending opcodes in the unpatched upstream core
 - **Code reads only from deployed code**: a key pointer is a contract with code, so reading it during validation is allowed
 - **Guardians after deployment**: an account deployed through `initCode` installs `QuantumValidator` without guardians, because the guardian list is a dynamic `bytes[]` whose storage is not associated with the account. Set guardians with `setGuardians` in a later user operation’s execution phase (`setGuardiansCall` in the SDK)
@@ -205,6 +239,6 @@ A Safe moves owner by owner with `swapOwner(prev, eoaOwner, pqSafeOwner)` and ke
 
 ## Deployment topology and program lifecycle
 
-ApeChain (chain 33139), an Arbitrum Orbit L3 settling to Arbitrum One, runs the Stylus verifiers and the full module stack. Arbitrum One runs the same modules with the Solidity ML-DSA-44 verifier, because new Stylus activations are paused there since 2 October 2026. An Arbitrum One account switches to the Stylus verifier with `rotateKey(stylusVerifier, keyPtr)` once activations resume; the pointer stays the same, because both verifiers read the same `0x00 ‖ 0x02 ‖ pk` code. Until then the Arbitrum One registry cannot verify ladder claims (L1 to L3), while K1 and R1 use `ecrecover` and the P-256 precompile and work.
+ApeChain (chain 33139), an Arbitrum Orbit L3 settling to Arbitrum One, runs the Stylus verifiers and the full module stack. Arbitrum One runs the same modules with the Solidity ML-DSA-44 verifier, because new Stylus activations are paused there since 2 October 2026. An Arbitrum One account switches to the Stylus verifier with `rotateKey(stylusVerifier, keyPtr, proof)` once activations resume, where `proof` is the same key’s signature over `rotationDigest(account, stylusVerifier, keyPtr)`; the pointer stays the same, because both verifiers read the same `0x00 ‖ 0x02 ‖ pk` code. Until then the Arbitrum One registry cannot verify ladder claims (L1 to L3), while K1 and R1 use `ecrecover` and the P-256 precompile and work.
 
 A Stylus activation lasts 365 days. `ArbWasm.programTimeLeft(address)` shows what is left, and `codehashKeepalive` renews it once 31 days have passed since the last activation or keepalive. An expired verifier stops validating every account configured with it until someone reactivates it, and reactivation is subject to the same activation pause, so every verifier needs a monitored keepalive. Where a chain has a Stylus cache manager, a cached program saves its initialization cost on every call (about 16k to 18k gas); ApeChain has none, so its programs run uncached. [docs/DEPLOYING.md](DEPLOYING.md) has the deployment, verification and keepalive commands.

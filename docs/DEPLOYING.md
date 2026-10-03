@@ -107,7 +107,10 @@ recorded as deployed but not yet active is only activated.
 
 The deployer key reaches cargo-stylus through a private temporary file, mounted read-only into the
 container and removed when the script exits. It is never written to the repository, the logs or the
-deployment records.
+deployment records. `cast` is different: it takes the key on its command line, where other local users
+can read it from the process list. The script derives the deployer address with `cast wallet address`,
+and `DEPLOY_VIA=cast` and the one-time StylusDeployer bootstrap (`DEPLOY_STYLUS_DEPLOYER=1`) send their
+transactions with `cast send --private-key`. Run the script only on a single-user machine.
 
 **Curtis:** the Curtis RPC node rejects the activation simulation that `cargo stylus check` and
 `cargo stylus deploy` run (an `eth_call` with a `2^256-1` balance override returns "method handler
@@ -132,6 +135,11 @@ scripts/stylus.sh contracts/stylus/mldsa44-verifier verify \
 image; that image pins the toolchain. The command runs `cargo clean` on `target-linux/` first. If the RPC
 drops its idle connection during the rebuild ("peer closed connection"), run it again with `--skip-clean`.
 All five deployments above verify.
+
+cargo-stylus hashes the program's `Cargo.toml`, `build.rs`, `src/*.rs` and the root `rust-toolchain.toml`
+byte for byte into a `project_hash` section of the deployed program. The deployments were built from a
+checkout with CRLF line endings, so `.gitattributes` checks those files out with CRLF on every platform;
+with LF line endings the rebuild differs and verification fails with a "prelude mismatch".
 
 Activation and a live signature check:
 

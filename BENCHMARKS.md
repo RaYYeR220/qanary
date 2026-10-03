@@ -107,6 +107,8 @@ Account-level costs come from Foundry, on an Arbitrum One fork at block 511,050,
 
 Adding the measured verify gas to the mock rows gives modeled figures, not measurements: a Kernel user operation signed with ML-DSA-44 on Stylus costs about 270k gas, and the 9-of-12 council needs about 500k gas with Falcon-512 owners (a 6,867-byte signature blob) or 1.17M with ML-DSA-44 owners (22,653 bytes). Reproduce the fork rows with `ARB_ONE_RPC=<archive RPC> forge test --match-path 'test/fork/*' -vv` and the Foundry rows with `forge test --match-contract HotTierExecutorTest -vv`.
 
+The fork rows were measured before the audit fixes added the `schemes()` probe to `onInstall` and the EIP-712 Safe binding to `PQSafeOwner`, and have not been re-measured since; the first-operation and council rows include those paths. A live figure for comparison: an ML-DSA-44 signed native transfer from a deployed Kernel account used 297,724 gas on ApeChain, with the uncached Stylus verifier and self-bundled ([`0xc60a…4f2e`](https://apescan.io/tx/0xc60a9ac330f5417e156d5c75e2754aad7bc573bedc0e5c42a41b27542a614f2e)).
+
 ## Tripwire claims
 
 A ladder claim verifies one ECDSA signature on a short curve in Stylus, with generic Jacobian arithmetic over `crypto-bigint`:

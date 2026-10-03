@@ -12,28 +12,6 @@ contracts/evm/stylus-wasm/
 .env.*
 *.key
 .secrets/
-# never publish working material
-BRIEF.md
-NOTES.md
-ALTERNATIVES.md
-recon/
-spike/
-docs/superpowers/
-superpowers/
-.claude/
-.remember/
-.agents/
-MEMORY.md
-*-internal/
-*-backup*
-*.bundle
-design-ref/
-ui-prototypes/
-mockups/
-variants/
-video/
-submission-packet.md
-.superpowers/
 .worktrees/
 
 # Local Nitro dev node deployments (ephemeral)
