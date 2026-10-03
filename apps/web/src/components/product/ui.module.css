@@ -276,6 +276,17 @@
   background: var(--ink-muted);
 }
 
+/* in a narrow ledger a mark wraps like text instead of running past its column */
+.ledger .mark {
+  display: inline;
+  white-space: normal;
+}
+
+.ledger .mark::before {
+  display: inline-block;
+  margin-right: 0.45em;
+}
+
 .mark[data-state='live']::before,
 .mark[data-state='ok']::before {
   background: var(--accent);

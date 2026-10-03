@@ -184,7 +184,7 @@ export function Dashboard({ network, account }: { network: ProductNetwork; accou
                     <dd>
                       {t.hot.frozen ? <Mark state="broken">Frozen</Mark> : `${(t.hot.effectiveBps / 100).toLocaleString('en-US')}% of each cap`}
                     </dd>
-                    <dt>Operations</dt>
+                    <dt>Next nonce</dt>
                     <dd>{t.hot.nonce.toString()}</dd>
                   </dl>
                   {t.hot.assets.map((a) => {
