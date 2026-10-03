@@ -1,0 +1,32 @@
+.columns {
+  display: grid;
+  gap: var(--s2);
+}
+
+.column {
+  display: grid;
+  align-content: start;
+  gap: var(--s0);
+  padding: var(--s1);
+  box-shadow: inset 0 0 0 1px var(--rule);
+  min-width: 0;
+}
+
+.verdict {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.gas {
+  font-family: var(--face-display);
+  font-size: var(--step-3);
+  line-height: 1.1;
+  color: var(--ink-strong);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+@media (min-width: 48em) {
+  .columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
