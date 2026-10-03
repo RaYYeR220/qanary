@@ -175,7 +175,7 @@ describe('the address of a new treasury', () => {
 
   it('refuses a zero answer instead of funding the zero address', async () => {
     const client = node(() => zeroAddress);
-    await expect(newTreasuryAccount(client, { signer, deployment: d, registry: d.canaryRegistry! })).rejects.toThrow(/could not work out/);
+    await expect(newTreasuryAccount(client, { signer, deployment: d, registry: d.canaryRegistry! })).rejects.toThrow(/zero address/);
     expect(() => fundRequest(zeroAddress, 100n, 0n)).toThrow(/not known/);
   });
 });

@@ -104,6 +104,8 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
   }, [phrase, scheme]);
 
   const words = phrase?.split(' ') ?? [];
+  // the gate for every step that sends: a key, and the phrase written down
+  const keyDone = !!signer && backedUp;
   const verifier = d.verifiers[scheme];
   const blob = useMemo(() => (signer ? keyBlob(signer) : null), [signer]);
   const pointer = blob && d.keyStore ? predictKeyPointer(d.keyStore, blob) : null;
@@ -133,7 +135,8 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
   useEffect(() => {
     setAccount(null);
     setPredictError(null);
-    if (!signer || !deployed) return;
+    // nothing about the account is shown or sent before the phrase is written down
+    if (!signer || !backedUp || !deployed) return;
     let live = true;
     newTreasuryAccount(client, {
       signer,
@@ -147,7 +150,7 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
       live = false;
     };
     // the hot setup does not move the address; it rides on the first operation
-  }, [signer, deployed, network.chainId, hot?.window, hot?.assets[0]?.cap, hot?.signer.family === 'secp256k1' ? hot.signer.eoa : '']);
+  }, [signer, backedUp, deployed, network.chainId, hot?.window, hot?.assets[0]?.cap, hot?.signer.family === 'secp256k1' ? hot.signer.eoa : '']);
 
   // ---------- chain state ----------
   const [stored, setStored] = useState<boolean | null>(null);
@@ -157,6 +160,19 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
   const [prefund, setPrefund] = useState<bigint | null>(null);
   const [prepareGas, setPrepareGas] = useState<bigint | null>(null);
   const [tick, setTick] = useState(0);
+
+  // a new key or network starts from unknown, not from the previous one's state
+  useEffect(() => {
+    setStored(null);
+    setPrepared(null);
+    setPrepareGas(null);
+  }, [pointer, client]);
+
+  useEffect(() => {
+    setBalance(null);
+    setLive(null);
+    setPrefund(null);
+  }, [account, client]);
 
   useEffect(() => {
     if (!pointer) return;
@@ -229,18 +245,21 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
 
   const doStore = () =>
     run('store', async () => {
+      if (!keyDone) return;
       if (!d.keyStore || !blob) return;
       await send('Key stored in the key store', storeKeyRequest(d.keyStore, blob));
     });
 
   const doPrepare = () =>
     run('prepare', async () => {
+      if (!keyDone) return;
       if (!verifier || !pointer) return;
       await send('Key prepared for the Solidity verifier', prepareKeyRequest(verifier, pointer));
     });
 
   const doFund = () =>
     run('fund', async () => {
+      if (!keyDone) return;
       if (!account || prefund === null) return;
       const request = fundRequest(account.address, prefund, balance ?? 0n);
       if (request) await send('Account funded for its first operation', request);
@@ -248,6 +267,7 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
 
   const doCreate = () =>
     run('create', async () => {
+      if (!keyDone) return;
       if (!wallet.data || !account || !conn.address) return;
       // the first operation deploys the account; the hot tier's install rides on it
       const { userOpHash, hash } = await selfBundleUserOperation(wallet.data, account, { calls: firstOperationCalls(conn.address) });
@@ -293,7 +313,6 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
     }
   };
 
-  const keyDone = !!signer && backedUp;
   const needsPrepare = solidity && scheme === 'mldsa44';
   const funded = prefund !== null && balance !== null && balance >= prefund;
   const stateOf = (done: boolean, can: boolean, needsDeploy = true): StepState =>
@@ -514,7 +533,7 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
           {stored ? (
             <Mark state="ok">Stored</Mark>
           ) : (
-            <button type="button" className={ui.button} disabled={!ready || !account || busy !== null} onClick={() => void doStore()}>
+            <button type="button" className={ui.button} disabled={!keyDone || !ready || !account || busy !== null} onClick={() => void doStore()}>
               {busy === 'store' ? 'Storing…' : 'Store the key'}
             </button>
           )}
@@ -522,7 +541,7 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
         </Step>
 
         {needsPrepare && (
-          <Step title="Prepare the key for the Solidity verifier" state={stateOf(!!prepared, !!stored)}>
+          <Step title="Prepare the key for the Solidity verifier" state={stateOf(!!prepared, keyDone && !!stored)}>
             <p className={ui.small}>
               The Solidity ML-DSA-44 verifier works from an expanded form of the key, computed and checked on-chain once.
               {prepareGas !== null && <> This costs about {gas(prepareGas)}.</>}
@@ -530,7 +549,7 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
             {prepared ? (
               <Mark state="ok">Prepared</Mark>
             ) : (
-              <button type="button" className={ui.button} disabled={!ready || !stored || busy !== null} onClick={() => void doPrepare()}>
+              <button type="button" className={ui.button} disabled={!keyDone || !ready || !stored || busy !== null} onClick={() => void doPrepare()}>
                 {busy === 'prepare' ? 'Preparing…' : 'Prepare the key'}
               </button>
             )}
@@ -538,7 +557,7 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
           </Step>
         )}
 
-        <Step title="Fund its first operation" state={stateOf(funded || !!live, !!stored && !!account)}>
+        <Step title="Fund its first operation" state={stateOf(funded || !!live, keyDone && !!stored && !!account)}>
           <p className={ui.small}>
             There is no bundler in between: your wallet submits the operation to the EntryPoint itself, and the
             account pays for its own execution from its balance.
@@ -555,7 +574,7 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
             </p>
           )}
           {!funded && !live && (
-            <button type="button" className={ui.button} disabled={!ready || !account || !stored || prefund === null || busy !== null} onClick={() => void doFund()}>
+            <button type="button" className={ui.button} disabled={!keyDone || !ready || !account || !stored || prefund === null || busy !== null} onClick={() => void doFund()}>
               {busy === 'fund' ? 'Sending…' : 'Send it from my wallet'}
             </button>
           )}
@@ -564,7 +583,7 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
 
         <Step
           title="Open the treasury"
-          state={stateOf(!!live || !!created?.ok, !!stored && funded && (!needsPrepare || !!prepared) && hotValid)}
+          state={stateOf(!!live || !!created?.ok, keyDone && !!stored && funded && (!needsPrepare || !!prepared) && hotValid)}
         >
           <p className={ui.small}>
             The post-quantum key signs the first operation in this page. It deploys the account{hotOn ? ' and installs the hot tier' : ''}.
@@ -591,7 +610,7 @@ export function OpenTreasury({ networks }: { networks: ProductNetwork[] }) {
             <button
               type="button"
               className={ui.button}
-              disabled={!ready || !stored || !funded || (needsPrepare && !prepared) || !hotValid || busy !== null}
+              disabled={!keyDone || !ready || !stored || !funded || (needsPrepare && !prepared) || !hotValid || busy !== null}
               onClick={() => void doCreate()}
             >
               {busy === 'create' ? 'Signing and sending…' : 'Sign and open the treasury'}
@@ -658,15 +677,20 @@ function LiveTreasuries({ networks }: { networks: ProductNetwork[] }) {
         Live treasuries
       </h2>
       <p className={ui.small}>
-        Opened by the recorded run and left on-chain. Their dashboards read everything live: the two keys, the cap, the
-        tripwire level and every operation. The run then tripped their drill registry, so their hot keys now refuse.
+        Opened by the recorded run and left on-chain. Their dashboards read everything live: the root key, the hot tier
+        where there is one, the tripwire level and every operation.
       </p>
       <ul className={styles.live}>
         {rows.map(({ n, h }) => (
           <li key={n.key + h.address}>
             <Link href={`/app/treasury/${n.key}/${h.address}`}>{h.label}</Link>
             <span className={ui.muted}>
-              {n.name}, {h.key}
+              {n.name}, {h.key}.{' '}
+              {h.hot === 'tripped'
+                ? 'Its hot key was capped, then shut by the drill the run tripped.'
+                : h.hot === 'installed'
+                  ? 'It has a capped hot key.'
+                  : 'No hot tier: the post-quantum key alone.'}
             </span>
           </li>
         ))}

@@ -1,9 +1,6 @@
 // The transactions behind "Open a treasury", built the same way for the page and its tests.
 
 import {
-  BaseError,
-  concat,
-  decodeErrorResult,
   encodeFunctionData,
   isAddressEqual,
   parseAbi,
@@ -16,10 +13,8 @@ import {
 import { DEFAULT_LEVEL_BPS } from './bucket';
 import {
   createQanaryAccount,
-  keyBlob,
   keyStoreAbi,
   NATIVE_ASSET,
-  predictKeyPointer,
   SELF_BUNDLE_GAS,
   type Deployment,
   type HotSetup,
@@ -105,60 +100,21 @@ export function firstOperationCalls(wallet: Address): { to: Address; value: bigi
   return [{ to: wallet, value: 0n }];
 }
 
-const entryPointSenderAbi = parseAbi(['function getSenderAddress(bytes initCode)', 'error SenderAddressResult(address sender)']);
-
-/** The revert data inside a failed call, wherever viem nested it. */
-function revertData(e: unknown): Hex | undefined {
-  if (!(e instanceof BaseError)) return undefined;
-  const found = e.walk((x) => {
-    const d = (x as { data?: unknown }).data;
-    return typeof d === 'string' || (typeof d === 'object' && d !== null && typeof (d as { data?: unknown }).data === 'string');
-  }) as { data?: Hex | { data: Hex } } | null;
-  const d = found?.data;
-  return typeof d === 'string' ? d : d?.data;
-}
-
 /**
- * A new treasury's account, at the address its first operation will deploy it to.
- *
- * The EntryPoint answers that address by running the account's deployment, and the deployment
- * installs the post-quantum validator, which reads the key from the key store. Before the key is
- * stored there is nothing to read, so the lookup is run with the key's code already in place
- * (`0x00 ‖ blob`, what `KeyStore.store` writes), as a state override of that one call.
+ * A new treasury's account, at the address its first operation will deploy it to. The SDK works
+ * the address out with the root key already in place, so it is right before the key is stored,
+ * and it never answers the zero address; the check here is a second lock on the funding step.
  */
 export async function newTreasuryAccount(
   client: PublicClient,
   opts: { signer: PqSigner; deployment: Deployment; registry: Address; hot?: HotSetup },
 ): Promise<KernelSmartAccount> {
-  const d = opts.deployment;
-  if (!d.keyStore) throw new Error('The key store is not deployed on this network.');
-  const blob = keyBlob(opts.signer);
-  const pointer = predictKeyPointer(d.keyStore, blob);
-  // the deployment call does not depend on the address or the hot tier: a placeholder skips the lookup
-  const draft = await createQanaryAccount(client, { signer: opts.signer, registry: opts.registry, deployment: d, address: zeroAddress });
-  const { factory, factoryData } = await draft.getFactoryArgs();
-  if (!factory || !factoryData) throw new Error('No deployment call for this account.');
-  let sender: Address | undefined;
-  try {
-    await client.call({
-      to: d.entryPoint,
-      data: encodeFunctionData({ abi: entryPointSenderAbi, functionName: 'getSenderAddress', args: [concat([factory, factoryData])] }),
-      stateOverride: [{ address: pointer, code: concat(['0x00', blob]) }],
-    });
-  } catch (e) {
-    const data = revertData(e);
-    if (data) {
-      const r = decodeErrorResult({ abi: entryPointSenderAbi, data });
-      if (r.errorName === 'SenderAddressResult') sender = r.args[0];
-    }
-    if (!sender) throw e;
-  }
-  if (!sender || isAddressEqual(sender, zeroAddress)) throw new Error('The EntryPoint could not work out the account address.');
-  return createQanaryAccount(client, {
+  const account = await createQanaryAccount(client, {
     signer: opts.signer,
     registry: opts.registry,
-    deployment: d,
-    address: sender,
+    deployment: opts.deployment,
     ...(opts.hot ? { hot: opts.hot } : {}),
   });
+  if (isAddressEqual(account.address, zeroAddress)) throw new Error('The EntryPoint could not work out the account address.');
+  return account;
 }
